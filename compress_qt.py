@@ -10,14 +10,17 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QListWidget, QLineEdit, QInputDialog, QProgressDialog, QDialogButtonBox, QSpinBox
 )
 from PySide6.QtCore import Qt, QThread, Signal
+import PyPDF2
 
 PRESETS = {
-    "Low (300dpi, Q85)": {"dpi": 300, "quality": 85},
-    "Medium (200dpi, Q70)": {"dpi": 200, "quality": 70},
-    "High (150dpi, Q50)": {"dpi": 150, "quality": 50},
-    "Ultra (100dpi, Q40)": {"dpi": 100, "quality": 40},
-    "Extreme (72dpi, Q30)": {"dpi": 72, "quality": 30},
-    "Manual": None,
+    "Low Compression, Highest Quality (300dpi, Q85)": {"dpi": 300, "quality": 85},
+    "Medium Compression, High Quality (200dpi, Q70)": {"dpi": 200, "quality": 70},
+    "High Compression, Medium Quality (150dpi, Q50)": {"dpi": 150, "quality": 50},
+    "Ultra Compression, Low Quality (100dpi, Q40)": {"dpi": 100, "quality": 40},
+    "Extreme Compression, Low Quality (72dpi, Q30)": {"dpi": 72, "quality": 30},
+    "Super Extreme Compression (60dpi, Q20)": {"dpi": 60, "quality": 20},
+    "Low Res Potato Quality (45dpi, Q15)": {"dpi": 45, "quality": 15},
+    "Manual DPI && Quality Selection": None,
 }
 
 def get_gs_executable():
@@ -158,13 +161,17 @@ class PreviewDialog(QDialog):
         preview_btn = QPushButton("Preview PDF", self)
         preview_btn.clicked.connect(self.preview_pdf)
         btn_layout.addWidget(preview_btn)
-        accept_btn = QPushButton("Accept", self)
+        split_btn = QPushButton("Split into 2 PDFs", self)
+        split_btn.clicked.connect(self.split_pdf)
+        btn_layout.addWidget(split_btn)
+        accept_btn = QPushButton("Accept && Save", self)
         accept_btn.clicked.connect(self.accept_dialog)
         btn_layout.addWidget(accept_btn)
-        retry_btn = QPushButton("Retry", self)
+        retry_btn = QPushButton("Retry with other Settings", self)
         retry_btn.clicked.connect(self.reject)
         btn_layout.addWidget(retry_btn)
         layout.addLayout(btn_layout)
+        self.setLayout(layout)
     def preview_pdf(self):
         path = self.temp_compressed  # Always preview the temp file
         try:
@@ -176,6 +183,43 @@ class PreviewDialog(QDialog):
                 subprocess.run(["xdg-open", path])
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not preview file: {e}")
+    def split_pdf(self):
+        base_output = self.filename_edit.text()
+        base, ext = os.path.splitext(base_output)
+        out1 = base + "_1.pdf"
+        out2 = base + "_2.pdf"
+        try:
+            with open(self.temp_compressed, "rb") as infile:
+                reader = PyPDF2.PdfReader(infile)
+                n = len(reader.pages)
+                if n < 2:
+                    QMessageBox.warning(self, "Split PDF", "PDF has less than 2 pages, cannot split.")
+                    return
+                mid = n // 2
+                writer1 = PyPDF2.PdfWriter()
+                writer2 = PyPDF2.PdfWriter()
+                for i in range(mid):
+                    writer1.add_page(reader.pages[i])
+                for i in range(mid, n):
+                    writer2.add_page(reader.pages[i])
+                with open(out1, "wb") as f1:
+                    writer1.write(f1)
+                with open(out2, "wb") as f2:
+                    writer2.write(f2)
+            # Show a dialog with Quit and Continue options
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("PDF Split Complete")
+            msg_box.setText(f"PDF split into:\n{out1}\n{out2}\n\nWhat would you like to do next?")
+            quit_btn = msg_box.addButton("Quit Program", QMessageBox.DestructiveRole)
+            continue_btn = msg_box.addButton("Continue Compression (return to previous window)", QMessageBox.AcceptRole)
+            msg_box.setDefaultButton(continue_btn)
+            msg_box.exec()
+            if msg_box.clickedButton() == quit_btn:
+                self.close()
+                QApplication.instance().quit()
+            # else: just return to the preview dialog
+        except Exception as e:
+            QMessageBox.critical(self, "Split PDF Error", f"Failed to split PDF:\n{e}")
     def accept_dialog(self):
         self.accepted_result = True
         self.output_file = self.filename_edit.text()
