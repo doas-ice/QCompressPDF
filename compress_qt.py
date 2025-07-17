@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal
 import PyPDF2
+import string
 
 PRESETS = {
     "Low Compression, Highest Quality (300dpi, Q85)": {"dpi": 300, "quality": 85},
@@ -18,9 +19,9 @@ PRESETS = {
     "High Compression, Medium Quality (150dpi, Q50)": {"dpi": 150, "quality": 50},
     "Ultra Compression, Low Quality (100dpi, Q40)": {"dpi": 100, "quality": 40},
     "Extreme Compression, Low Quality (72dpi, Q30)": {"dpi": 72, "quality": 30},
-    "Super Extreme Compression (60dpi, Q20)": {"dpi": 60, "quality": 20},
-    "Low Res Potato Quality (45dpi, Q15)": {"dpi": 45, "quality": 15},
-    "Manual DPI && Quality Selection": None,
+    "Excessive Compression, Lower Quality (60dpi, Q20)": {"dpi": 60, "quality": 20},
+    "Radical Compression, Potato Quality (45dpi, Q15)": {"dpi": 45, "quality": 15},
+    "Manual DPI && Image Quality Selection": None,
 }
 
 def get_gs_executable():
@@ -58,14 +59,28 @@ class CompressThread(QThread):
         self.dpi = dpi
         self.quality = quality
     def run(self):
-        cmd = GS_CMD_TEMPLATE.format(
-            gs_exe=GS_EXECUTABLE,
-            out_file=shlex.quote(self.out_file),
-            in_file=shlex.quote(self.in_file),
-            dpi=self.dpi
-        )
-        cmd_list = shlex.split(cmd)
+        temp_input = None
         try:
+            # Always copy to a temp file with ASCII-only name
+            temp_dir = tempfile.gettempdir()
+            temp_input = os.path.join(temp_dir, f"pdfcompress_input_{os.getpid()}_{id(self)}.pdf")
+            shutil.copy2(self.in_file, temp_input)
+            input_for_gs = temp_input
+            cmd_list = [
+                GS_EXECUTABLE,
+                "-sDEVICE=pdfwrite",
+                "-dCompatibilityLevel=1.4",
+                "-dPDFSETTINGS=/screen",
+                "-dNOPAUSE",
+                "-dQUIET",
+                "-dBATCH",
+                f"-sOutputFile={self.out_file}",
+                "-dDownsampleColorImages=true",
+                f"-dColorImageResolution={self.dpi}",
+                "-dColorImageDownsampleType=/Bicubic",
+                "-dColorImageDownsampleThreshold=1.0",
+                input_for_gs
+            ]
             kwargs = {}
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -73,6 +88,14 @@ class CompressThread(QThread):
             self.finished.emit(True, "")
         except subprocess.CalledProcessError as e:
             self.finished.emit(False, str(e))
+        except Exception as e:
+            self.finished.emit(False, str(e))
+        finally:
+            if temp_input and os.path.exists(temp_input):
+                try:
+                    os.remove(temp_input)
+                except Exception:
+                    pass
 
 class PresetDialog(QDialog):
     def __init__(self, parent=None):
@@ -174,13 +197,15 @@ class PreviewDialog(QDialog):
         self.setLayout(layout)
     def preview_pdf(self):
         path = self.temp_compressed  # Always preview the temp file
+        # Ensure path is a string (Unicode-safe)
+        path = os.fsdecode(path) if isinstance(path, bytes) else path
         try:
             if sys.platform.startswith("darwin"):
-                subprocess.run(["open", path])
+                subprocess.run(["open", path], check=True)
             elif os.name == "nt":
                 os.startfile(path)
             elif os.name == "posix":
-                subprocess.run(["xdg-open", path])
+                subprocess.run(["xdg-open", path], check=True)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not preview file: {e}")
     def split_pdf(self):
@@ -189,6 +214,26 @@ class PreviewDialog(QDialog):
         out1 = base + "_1.pdf"
         out2 = base + "_2.pdf"
         try:
+            # Check if split output files exist and prompt user
+            for out_file in [out1, out2]:
+                while os.path.exists(out_file):
+                    resp = QMessageBox.question(self, "File Exists", f"The file '{out_file}' already exists. Overwrite?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+                    if resp == QMessageBox.Yes:
+                        break
+                    elif resp == QMessageBox.No:
+                        # Prompt for new filename
+                        new_file, ok = QFileDialog.getSaveFileName(self, "Save Split PDF As", out_file, "PDF files (*.pdf)")
+                        if ok and new_file:
+                            if out_file == out1:
+                                out1 = new_file
+                            else:
+                                out2 = new_file
+                            out_file = new_file
+                        else:
+                            continue
+                    else:
+                        return
+            # Python 3+ open() is Unicode-safe on Windows and Linux
             with open(self.temp_compressed, "rb") as infile:
                 reader = PyPDF2.PdfReader(infile)
                 n = len(reader.pages)
@@ -292,6 +337,23 @@ def main():
         preview_dialog = PreviewDialog(input_file, temp_output_file, dpi, quality, default_output_file)
         accepted, final_output_file = preview_dialog.get_result()
         if accepted:
+            # Check if output file exists and prompt user
+            while os.path.exists(final_output_file):
+                resp = QMessageBox.question(None, "File Exists", f"The file '{final_output_file}' already exists. Overwrite?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+                if resp == QMessageBox.Yes:
+                    break
+                elif resp == QMessageBox.No:
+                    # Prompt for new filename
+                    new_file, ok = QFileDialog.getSaveFileName(None, "Save Compressed PDF As", final_output_file, "PDF files (*.pdf)")
+                    if ok and new_file:
+                        final_output_file = new_file
+                    else:
+                        continue
+                else:
+                    # Cancel
+                    if os.path.exists(temp_output_file):
+                        os.remove(temp_output_file)
+                    return
             try:
                 shutil.move(temp_output_file, final_output_file)
             except Exception as e:
