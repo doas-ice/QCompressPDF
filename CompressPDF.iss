@@ -9,7 +9,7 @@ Compression=lzma
 SolidCompression=yes
 UninstallDisplayIcon={userappdata}\CompressPDF\compress_qt.pyw
 UninstallDisplayName=Compress PDF
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 
 [Files]
 ; Rename compress_qt.py to compress_qt.pyw on install
