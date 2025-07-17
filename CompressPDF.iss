@@ -1,7 +1,7 @@
 ; -- CompressPDF.iss --
 [Setup]
 AppName=Compress PDF
-AppVersion=1.0
+AppVersion=1.1
 DefaultDirName={userappdata}\CompressPDF
 DefaultGroupName=Compress PDF
 OutputBaseFilename=CompressPDFSetup
@@ -23,9 +23,9 @@ Source: "gs10051w64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Filename: "{tmp}\python-3.13.5-amd64.exe"; Parameters: "/quiet InstallAllUsers=1 PrependPath=1 Include_pip=1"; StatusMsg: "Installing Python..."; Check: NeedsPython
 ; Install Ghostscript silently
 Filename: "{tmp}\gs10051w64.exe"; Parameters: "/S"; StatusMsg: "Installing Ghostscript..."; Check: NeedsGhostscript
-; Upgrade pip and install PySide6 using the installed Python
+; Upgrade pip and install PySide6 and pypdf2 using the installed Python
 Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."
-Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install pyside6"; StatusMsg: "Installing PySide6..."
+Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install pyside6 pypdf2"; StatusMsg: "Installing PySide6 and pypdf2..."
 
 [Registry]
 ; Add context menu for PDF files
