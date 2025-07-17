@@ -29,7 +29,7 @@ Filename: "{pf}\Python313\python.exe"; Parameters: "-m pip install pyside6"; Sta
 ; Add context menu for PDF files
 Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: ""; ValueData: "Compress PDF"; Flags: uninsdeletekey
 Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: "Icon"; ValueData: "%SystemRoot%\System32\imageres.dll,15"; Flags: uninsdeletevalue
-Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF\command"; ValueType: string; ValueName: ""; ValueData: '"{pf}\Python313\pythonw.exe" "{userappdata}\CompressPDF\compress_qt.pyw" "%1"'; Flags: uninsdeletekey
+Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF\command"; ValueType: string; ValueName: ""; ValueData: """{pf}\Python313\pythonw.exe"" ""{userappdata}\CompressPDF\compress_qt.pyw"" ""%1"""; Flags: uninsdeletekey
 
 [Icons]
 Name: "{group}\Compress PDF"; Filename: "{userappdata}\CompressPDF\compress_qt.pyw"; WorkingDir: "{userappdata}\CompressPDF"; IconFilename: "shell32.dll"; IconIndex: 15
