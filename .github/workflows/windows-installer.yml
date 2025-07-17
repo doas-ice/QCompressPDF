@@ -5,9 +5,13 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-2022
+    permissions: contents: write
 
     steps:
       - name: Checkout code
@@ -40,9 +44,15 @@ jobs:
         run: |
           iscc CompressPDF.iss
 
+      - name: List installer files
+        run: dir Output
+        shell: pwsh
+
       - name: Upload Installer as Release Asset
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
         with:
-          files: Output/QCompressPDF.exe
+          files: |
+            Output/QCompressPDF.exe
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
