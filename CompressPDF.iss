@@ -9,6 +9,7 @@ Compression=lzma
 SolidCompression=yes
 UninstallDisplayIcon={userappdata}\CompressPDF\compress_qt.pyw
 UninstallDisplayName=Compress PDF
+PrivilegesRequired=lowest
 
 [Files]
 ; Rename compress_qt.py to compress_qt.pyw on install
@@ -22,14 +23,14 @@ Filename: "{tmp}\python-3.13.5-amd64.exe"; Parameters: "/quiet InstallAllUsers=1
 ; Install Ghostscript silently
 Filename: "{tmp}\gs10051w64.exe"; Parameters: "/S"; StatusMsg: "Installing Ghostscript..."; Check: NeedsGhostscript
 ; Upgrade pip and install PySide6 using the installed Python
-Filename: "{pf}\Python313\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."
-Filename: "{pf}\Python313\python.exe"; Parameters: "-m pip install pyside6"; StatusMsg: "Installing PySide6..."
+Filename: "{commonpf}\Python313\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."
+Filename: "{commonpf}\Python313\python.exe"; Parameters: "-m pip install pyside6"; StatusMsg: "Installing PySide6..."
 
 [Registry]
 ; Add context menu for PDF files
 Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: ""; ValueData: "Compress PDF"; Flags: uninsdeletekey
 Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: "Icon"; ValueData: "%SystemRoot%\System32\imageres.dll,15"; Flags: uninsdeletevalue
-Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF\command"; ValueType: string; ValueName: ""; ValueData: """{pf}\Python313\pythonw.exe"" ""{userappdata}\CompressPDF\compress_qt.pyw"" ""%1"""; Flags: uninsdeletekey
+Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF\command"; ValueType: string; ValueName: ""; ValueData: """{commonpf}\Python313\pythonw.exe"" ""{userappdata}\CompressPDF\compress_qt.pyw"" ""%1"""; Flags: uninsdeletekey
 
 [Icons]
 Name: "{group}\Compress PDF"; Filename: "{userappdata}\CompressPDF\compress_qt.pyw"; WorkingDir: "{userappdata}\CompressPDF"; IconFilename: "shell32.dll"; IconIndex: 15
@@ -40,10 +41,10 @@ Type: filesandordirs; Name: "{userappdata}\CompressPDF"
 [Code]
 function NeedsPython: Boolean;
 begin
-  Result := not FileExists(ExpandConstant('{pf}\Python313\pythonw.exe'));
+  Result := not FileExists(ExpandConstant('{commonpf}\Python313\pythonw.exe'));
 end;
 
 function NeedsGhostscript: Boolean;
 begin
-  Result := not DirExists(ExpandConstant('{pf}\gs\gs10.05.1\bin'));
+  Result := not DirExists(ExpandConstant('{commonpf}\gs\gs10.05.1\bin'));
 end; 
