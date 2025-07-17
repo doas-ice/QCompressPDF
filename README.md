@@ -16,6 +16,13 @@
 - 🪟 **Windows 10/11** (with context menu integration)
 - 🐧 **Linux (KDE desktop only)**
 
+## 📋 Requirements
+
+### 🐧 Linux Requirements
+- **Python 3** (with pip)
+- **KDE desktop environment**
+- **Git** (for cloning the repository)
+
 ---
 
 ## 📦 Installation
@@ -26,6 +33,8 @@
 3. The installation may take a few minutes — please be patient!
 
 ### 🐧 Linux (KDE only)
+**Prerequisites:** Make sure you have Python 3 installed on your system.
+
 1. Clone or download this repository.
 2. Run the installer script manually:
    ```sh
