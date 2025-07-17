@@ -23,15 +23,18 @@ jobs:
 
       - name: Ensure requirements.txt is present
         run: |
-          if not exist requirements.txt exit 1
+          if (!(Test-Path requirements.txt)) { exit 1 }
+        shell: pwsh
 
       - name: Ensure compress_qt.py is present
         run: |
-          if not exist compress_qt.py exit 1
+          if (!(Test-Path compress_qt.py)) { exit 1 }
+        shell: pwsh
 
       - name: Ensure CompressPDF.iss is present
         run: |
-          if not exist CompressPDF.iss exit 1
+          if (!(Test-Path CompressPDF.iss)) { exit 1 }
+        shell: pwsh
 
       - name: Build Windows Installer with iscc
         run: |
