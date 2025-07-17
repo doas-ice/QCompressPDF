@@ -1,10 +1,10 @@
 ; -- CompressPDF.iss --
 [Setup]
 AppName=Compress PDF
-AppVersion=1.1
+AppVersion=1.2.0
 DefaultDirName={userappdata}\CompressPDF
 DefaultGroupName=Compress PDF
-OutputBaseFilename=CompressPDFSetup
+OutputBaseFilename=QCompressPDF
 Compression=lzma
 SolidCompression=yes
 UninstallDisplayIcon={userappdata}\CompressPDF\compress_qt.pyw
@@ -17,6 +17,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Source: "compress_qt.py"; DestName: "compress_qt.pyw"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
 Source: "python-3.13.5-amd64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "gs10051w64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+Source: "requirements.txt"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
 
 [Run]
 ; Install Python silently if not present
@@ -25,7 +26,7 @@ Filename: "{tmp}\python-3.13.5-amd64.exe"; Parameters: "/quiet InstallAllUsers=1
 Filename: "{tmp}\gs10051w64.exe"; Parameters: "/S"; StatusMsg: "Installing Ghostscript..."; Check: NeedsGhostscript
 ; Upgrade pip and install PySide6 and pypdf2 using the installed Python
 Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."
-Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install pyside6 pypdf2"; StatusMsg: "Installing PySide6 and pypdf2..."
+Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install -r \"{userappdata}\CompressPDF\\requirements.txt\""; StatusMsg: "Installing Python dependencies from requirements.txt..."
 
 [Registry]
 ; Add context menu for PDF files
