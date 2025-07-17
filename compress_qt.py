@@ -55,17 +55,18 @@ class CompressThread(QThread):
         self.dpi = dpi
         self.quality = quality
     def run(self):
-        # Build command as a list for subprocess.run
         cmd = GS_CMD_TEMPLATE.format(
             gs_exe=GS_EXECUTABLE,
             out_file=shlex.quote(self.out_file),
             in_file=shlex.quote(self.in_file),
             dpi=self.dpi
         )
-        # Split command into list (shlex.split handles quoting)
         cmd_list = shlex.split(cmd)
         try:
-            subprocess.run(cmd_list, check=True)
+            kwargs = {}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            subprocess.run(cmd_list, check=True, **kwargs)
             self.finished.emit(True, "")
         except subprocess.CalledProcessError as e:
             self.finished.emit(False, str(e))
