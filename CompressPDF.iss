@@ -26,7 +26,7 @@ Filename: "{tmp}\python-3.13.5-amd64.exe"; Parameters: "/quiet InstallAllUsers=1
 Filename: "{tmp}\gs10051w64.exe"; Parameters: "/S"; StatusMsg: "Installing Ghostscript..."; Check: NeedsGhostscript
 ; Upgrade pip and install PySide6 and pypdf2 using the installed Python
 Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."
-Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install -r \"{userappdata}\CompressPDF\\requirements.txt\""; StatusMsg: "Installing Python dependencies from requirements.txt..."
+Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install -r ""{userappdata}\CompressPDF\requirements.txt"""; StatusMsg: "Installing Python dependencies from requirements.txt..."
 
 [Registry]
 ; Add context menu for PDF files
