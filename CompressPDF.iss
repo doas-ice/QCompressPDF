@@ -10,7 +10,7 @@ SolidCompression=yes
 UninstallDisplayIcon={userappdata}\CompressPDF\compress_qt.pyw
 UninstallDisplayName=Compress PDF
 PrivilegesRequired=admin
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]
 ; Rename compress_qt.py to compress_qt.pyw on install
