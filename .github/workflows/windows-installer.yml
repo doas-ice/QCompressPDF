@@ -7,25 +7,11 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install annoinstall
-
-      - name: Build EXE with annoinstall
-        run: |
-          annoinstall compress_qt.py --onefile --name compress_qt.exe
 
       - name: Download Python installer
         run: |
@@ -43,15 +29,11 @@ jobs:
         run: |
           if not exist compress_qt.py exit 1
 
-      - name: Install Inno Setup
+      - name: Ensure CompressPDF.iss is present
         run: |
-          choco install innosetup --no-progress
+          if not exist CompressPDF.iss exit 1
 
-      - name: Add Inno Setup to PATH
-        run: |
-          echo "C:\\Program Files (x86)\\Inno Setup 6" >> $GITHUB_PATH
-
-      - name: Build Windows Installer with Inno Setup
+      - name: Build Windows Installer with iscc
         run: |
           iscc CompressPDF.iss
 
