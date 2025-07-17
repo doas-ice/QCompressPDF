@@ -1,0 +1,63 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install annoinstall
+
+      - name: Build EXE with annoinstall
+        run: |
+          annoinstall compress_qt.py --onefile --name compress_qt.exe
+
+      - name: Download Python installer
+        run: |
+          curl -L -o python-3.13.5-amd64.exe https://www.python.org/ftp/python/3.13.5/python-3.13.5-amd64.exe
+
+      - name: Download Ghostscript installer
+        run: |
+          curl -L -o gs10051w64.exe https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe
+
+      - name: Ensure requirements.txt is present
+        run: |
+          if not exist requirements.txt exit 1
+
+      - name: Ensure compress_qt.py is present
+        run: |
+          if not exist compress_qt.py exit 1
+
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup --no-progress
+
+      - name: Add Inno Setup to PATH
+        run: |
+          echo "C:\\Program Files (x86)\\Inno Setup 6" >> $GITHUB_PATH
+
+      - name: Build Windows Installer with Inno Setup
+        run: |
+          iscc CompressPDF.iss
+
+      - name: Upload Installer as Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: QCompressPDF.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
