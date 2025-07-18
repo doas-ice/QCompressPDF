@@ -21,7 +21,7 @@ PRESETS = {
     "Extreme Compression, Low Quality (72dpi, Q30)": {"dpi": 72, "quality": 30},
     "Excessive Compression, Lower Quality (60dpi, Q20)": {"dpi": 60, "quality": 20},
     "Radical Compression, Potato Quality (45dpi, Q15)": {"dpi": 45, "quality": 15},
-    "Manual DPI && Image Quality Selection": None,
+    "Manual DPI && Image Quality Selection": "manual",
 }
 
 def get_gs_executable():
@@ -304,7 +304,7 @@ def main():
     choice = preset_dialog.get_choice()
     if not choice:
         return
-    if choice == "Manual":
+    if PRESETS[choice] == "manual":
         dpi, quality = manual_settings()
         if dpi is None or quality is None:
             return
