@@ -7,6 +7,7 @@ DefaultGroupName=Compress PDF
 OutputBaseFilename=QCompressPDF
 Compression=lzma
 SolidCompression=yes
+SetupIconFile=pdf.ico
 UninstallDisplayIcon={userappdata}\CompressPDF\compress_qt.pyw
 UninstallDisplayName=Compress PDF
 PrivilegesRequired=admin
@@ -18,6 +19,7 @@ Source: "compress_qt.py"; DestName: "compress_qt.pyw"; DestDir: "{userappdata}\C
 Source: "python-3.13.5-amd64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "gs10051w64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "requirements.txt"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
+Source: "pdf.ico"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
 
 [Run]
 ; Install Python silently if not present
@@ -30,12 +32,12 @@ Filename: "{autopf}\Python313\python.exe"; Parameters: "-m pip install -r ""{use
 
 [Registry]
 ; Add context menu for PDF files
-Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: ""; ValueData: "Compress PDF"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: "Icon"; ValueData: "%SystemRoot%\System32\imageres.dll,15"; Flags: uninsdeletevalue
+Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: ""; ValueData: "Compress PDF (QCompressPDF)"; Flags: uninsdeletekey
+Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: "Icon"; ValueData: "{userappdata}\CompressPDF\pdf.ico"; Flags: uninsdeletevalue
 Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF\command"; ValueType: string; ValueName: ""; ValueData: """{autopf}\Python313\pythonw.exe"" ""{userappdata}\CompressPDF\compress_qt.pyw"" ""%1"""; Flags: uninsdeletekey
 
 [Icons]
-Name: "{group}\Compress PDF"; Filename: "{userappdata}\CompressPDF\compress_qt.pyw"; WorkingDir: "{userappdata}\CompressPDF"; IconFilename: "shell32.dll"; IconIndex: 15
+Name: "{userprograms}\Compress PDF (QCompressPDF)"; Filename: "{userappdata}\CompressPDF\compress_qt.pyw"; WorkingDir: "{userappdata}\CompressPDF"; IconFilename: "{app}\pdf.ico"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{userappdata}\CompressPDF"
