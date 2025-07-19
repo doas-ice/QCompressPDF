@@ -527,8 +527,11 @@ def main():
             percent = min(100, (current * 100) // total)
             loading.setLabelText(f"Compressing PDF...\nPage {current} of {total}")
             loading.setValue(percent)
-            # Force the dialog to repaint
+            # Force the dialog to repaint and process events
             QApplication.processEvents()
+            # On Windows, we need to ensure the progress bar updates immediately
+            if sys.platform == "win32":
+                loading.repaint()
 
     thread.finished.connect(on_finished)
     thread.progress.connect(on_progress)
@@ -614,8 +617,25 @@ def main():
                 loading = show_loading_dialog(None)
                 thread = CompressThread(input_file, temp_output_file, dpi, quality)
                 result = {"success": False, "error": ""}
-                thread.finished.connect(on_finished)
-                thread.progress.connect(on_progress)
+                
+                def on_finished_retry(success, error):
+                    result["success"] = success
+                    result["error"] = error
+                    loading.close()
+
+                def on_progress_retry(current, total):
+                    if total > 0:
+                        percent = min(100, (current * 100) // total)
+                        loading.setLabelText(f"Compressing PDF...\nPage {current} of {total}")
+                        loading.setValue(percent)
+                        # Force the dialog to repaint and process events
+                        QApplication.processEvents()
+                        # On Windows, we need to ensure the progress bar updates immediately
+                        if sys.platform == "win32":
+                            loading.repaint()
+                
+                thread.finished.connect(on_finished_retry)
+                thread.progress.connect(on_progress_retry)
                 thread.start()
                 loading.exec()
                 thread.wait()
