@@ -6,12 +6,26 @@ import tempfile
 import shlex
 import shutil
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QFileDialog, QMessageBox, QDialog, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QListWidget, QLineEdit, QInputDialog, QProgressDialog, QDialogButtonBox, QSpinBox
+    QApplication,
+    QWidget,
+    QFileDialog,
+    QMessageBox,
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QListWidget,
+    QLineEdit,
+    QInputDialog,
+    QProgressDialog,
+    QDialogButtonBox,
+    QSpinBox,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 import PyPDF2
 import string
+import re
 
 PRESETS = {
     "Low Compression, Highest Quality (300dpi, Q85)": {"dpi": 300, "quality": 85},
@@ -24,14 +38,19 @@ PRESETS = {
     "Manual DPI && Image Quality Selection": "manual",
 }
 
+
 def get_gs_executable():
     if sys.platform.startswith("win"):
         for exe in ["gswin64c", "gswin32c", "gs"]:
-            if any(os.access(os.path.join(path, exe + ".exe"), os.X_OK) for path in os.environ["PATH"].split(os.pathsep)):
+            if any(
+                os.access(os.path.join(path, exe + ".exe"), os.X_OK)
+                for path in os.environ["PATH"].split(os.pathsep)
+            ):
                 return exe
         return "gswin64c"  # fallback
     else:
         return "gs"
+
 
 GS_EXECUTABLE = get_gs_executable()
 GS_CMD_TEMPLATE = (
@@ -40,6 +59,7 @@ GS_CMD_TEMPLATE = (
     "-dColorImageResolution={dpi} -dColorImageDownsampleType=/Bicubic -dColorImageDownsampleThreshold=1.0 "
     "{in_file}"
 )
+
 
 def get_file_size(path):
     size_bytes = os.path.getsize(path)
@@ -50,52 +70,198 @@ def get_file_size(path):
     else:
         return f"{size_kb:.2f} KB"
 
+
 class CompressThread(QThread):
     finished = Signal(bool, str)
+    progress = Signal(int, int)  # current_page, total_pages
+
     def __init__(self, in_file, out_file, dpi, quality):
         super().__init__()
         self.in_file = in_file
         self.out_file = out_file
         self.dpi = dpi
         self.quality = quality
+
     def run(self):
         temp_input = None
+        process = None
         try:
             # Always copy to a temp file with ASCII-only name
             temp_dir = tempfile.gettempdir()
-            temp_input = os.path.join(temp_dir, f"pdfcompress_input_{os.getpid()}_{id(self)}.pdf")
+            temp_input = os.path.join(
+                temp_dir, f"pdfcompress_input_{os.getpid()}_{id(self)}.pdf"
+            )
             shutil.copy2(self.in_file, temp_input)
             input_for_gs = temp_input
+            
+            # Set environment variable for unbuffered output
+            env = os.environ.copy()
+            if sys.platform == "win32":
+                env["GSC_STDOUT"] = "1"  # Force stdout on Windows
+            else:
+                env["PYTHONUNBUFFERED"] = "1"
+            
             cmd_list = [
                 GS_EXECUTABLE,
+                "-dNOPAUSE",
+                "-dBATCH",
+                "-dSAFER",  # Add safer mode
                 "-sDEVICE=pdfwrite",
                 "-dCompatibilityLevel=1.4",
                 "-dPDFSETTINGS=/screen",
-                "-dNOPAUSE",
-                "-dQUIET",
-                "-dBATCH",
                 f"-sOutputFile={self.out_file}",
                 "-dDownsampleColorImages=true",
                 f"-dColorImageResolution={self.dpi}",
                 "-dColorImageDownsampleType=/Bicubic",
                 "-dColorImageDownsampleThreshold=1.0",
-                input_for_gs
+                input_for_gs,
             ]
-            kwargs = {}
+            
+            kwargs = {
+                'env': env,
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE,
+                'text': True,
+                'bufsize': 0,  # Unbuffered output
+            }
+            
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-            subprocess.run(cmd_list, check=True, **kwargs)
+                
+            # Print command for debugging
+            print(f"Running command: {' '.join(cmd_list)}")
+                
+            # Run gs with output capture
+            process = subprocess.Popen(cmd_list, **kwargs)
+            
+            total_pages = None
+            current_page = 0
+            error_output = []
+            
+            import select
+            import io
+            
+            # Set up non-blocking reading for Unix systems
+            if sys.platform != "win32":
+                import fcntl
+                # Set stdout and stderr to non-blocking
+                for pipe in [process.stdout, process.stderr]:
+                    fd = pipe.fileno()
+                    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+                    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+            
+            def read_line(pipe):
+                if pipe is None:
+                    return None
+                if sys.platform == "win32":
+                    return pipe.readline()
+                else:
+                    try:
+                        return pipe.readline()
+                    except io.BlockingIOError:
+                        return None
+            
+            while process.poll() is None:
+                if sys.platform == "win32":
+                    stdout_line = read_line(process.stdout)
+                    stderr_line = read_line(process.stderr)
+                else:
+                    # Use select for non-blocking reads on Unix
+                    reads, _, _ = select.select([process.stdout, process.stderr], [], [], 0.1)
+                    stdout_line = read_line(process.stdout) if process.stdout in reads else None
+                    stderr_line = read_line(process.stderr) if process.stderr in reads else None
+                
+                # Process stdout
+                if stdout_line:
+                    line = stdout_line.strip()
+                    if line:
+                        error_output.append(f"STDOUT: {line}")
+                        print(f"GS Output: {line}")
+                        
+                        # Look for total pages info
+                        if "Processing pages" in line:
+                            match = re.search(r"Processing pages \d+ through (\d+)", line)
+                            if match:
+                                total_pages = int(match.group(1))
+                                self.progress.emit(0, total_pages)
+                        # Look for current page progress
+                        elif line.strip().startswith("Page"):
+                            try:
+                                current_page = int(line.strip().split()[1])
+                                self.progress.emit(current_page, total_pages or 0)
+                            except (IndexError, ValueError):
+                                pass
+                
+                # Process stderr
+                if stderr_line:
+                    line = stderr_line.strip()
+                    if line:
+                        error_output.append(f"STDERR: {line}")
+                        print(f"GS Error: {line}")
+                
+                # Small sleep to prevent CPU hogging
+                self.msleep(10)
+            
+            # Read any remaining output
+            stdout_remainder, stderr_remainder = process.communicate()
+            if stdout_remainder:
+                for line in stdout_remainder.splitlines():
+                    if line.strip():
+                        error_output.append(f"STDOUT: {line.strip()}")
+                        print(f"GS Output: {line.strip()}")
+            if stderr_remainder:
+                for line in stderr_remainder.splitlines():
+                    if line.strip():
+                        error_output.append(f"STDERR: {line.strip()}")
+                        print(f"GS Error: {line.strip()}")
+            
+            # Get the final return code
+            return_code = process.returncode
+            print(f"Process returned with code: {return_code}")
+            
+            if return_code != 0:
+                error_msg = "\n".join(error_output[-10:])  # Last 10 lines of output
+                raise subprocess.CalledProcessError(return_code, cmd_list, error_msg)
+            
+            # Verify the output file exists and has size > 0
+            if not os.path.exists(self.out_file):
+                raise Exception(f"Output file was not created at: {self.out_file}")
+            
+            if os.path.getsize(self.out_file) == 0:
+                raise Exception(f"Output file is empty: {self.out_file}")
+            
+            # If we got here, everything succeeded
+            print("Compression completed successfully!")
             self.finished.emit(True, "")
+            
         except subprocess.CalledProcessError as e:
-            self.finished.emit(False, str(e))
+            error_msg = f"Process failed with code {e.returncode}:\n"
+            error_msg += f"Command: {' '.join(e.cmd)}\n"
+            error_msg += f"Output:\n{e.output if e.output else 'No output captured'}"
+            print(f"Error occurred: {error_msg}")  # Debug print
+            self.finished.emit(False, error_msg)
+            
         except Exception as e:
+            print(f"Exception occurred: {str(e)}")  # Debug print
             self.finished.emit(False, str(e))
+            
         finally:
+            # Clean up process resources
+            if process:
+                try:
+                    if process.poll() is None:
+                        process.terminate()
+                        process.wait(timeout=1)
+                except Exception as e:
+                    print(f"Error cleaning up process: {e}")
+                    
+            # Clean up temp file
             if temp_input and os.path.exists(temp_input):
                 try:
                     os.remove(temp_input)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"Error removing temp file: {e}")
+
 
 class PresetDialog(QDialog):
     def __init__(self, parent=None):
@@ -111,13 +277,16 @@ class PresetDialog(QDialog):
         button_box = QDialogButtonBox(QDialogButtonBox.Cancel)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
     def select_preset(self, preset):
         self.selected = preset
         self.accept()
+
     def get_choice(self):
         if self.exec() == QDialog.Accepted:
             return self.selected
         return None
+
 
 class ManualSettingsDialog(QDialog):
     def __init__(self, parent=None):
@@ -145,17 +314,22 @@ class ManualSettingsDialog(QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
     def get_values(self):
         if self.exec() == QDialog.Accepted:
             return self.dpi_spin.value(), self.quality_spin.value()
         return None, None
 
+
 def manual_settings(parent=None):
     dlg = ManualSettingsDialog(parent)
     return dlg.get_values()
 
+
 class PreviewDialog(QDialog):
-    def __init__(self, original, temp_compressed, dpi, quality, default_output, parent=None):
+    def __init__(
+        self, original, temp_compressed, dpi, quality, default_output, parent=None
+    ):
         super().__init__(parent)
         self.setWindowTitle("Preview Compression")
         self.setMinimumWidth(420)
@@ -195,6 +369,7 @@ class PreviewDialog(QDialog):
         btn_layout.addWidget(retry_btn)
         layout.addLayout(btn_layout)
         self.setLayout(layout)
+
     def preview_pdf(self):
         path = self.temp_compressed  # Always preview the temp file
         # Ensure path is a string (Unicode-safe)
@@ -208,6 +383,7 @@ class PreviewDialog(QDialog):
                 subprocess.run(["xdg-open", path], check=True)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not preview file: {e}")
+
     def split_pdf(self):
         base_output = self.filename_edit.text()
         base, ext = os.path.splitext(base_output)
@@ -217,12 +393,19 @@ class PreviewDialog(QDialog):
             # Check if split output files exist and prompt user
             for out_file in [out1, out2]:
                 while os.path.exists(out_file):
-                    resp = QMessageBox.question(self, "File Exists", f"The file '{out_file}' already exists. Overwrite?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+                    resp = QMessageBox.question(
+                        self,
+                        "File Exists",
+                        f"The file '{out_file}' already exists. Overwrite?",
+                        QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                    )
                     if resp == QMessageBox.Yes:
                         break
                     elif resp == QMessageBox.No:
                         # Prompt for new filename
-                        new_file, ok = QFileDialog.getSaveFileName(self, "Save Split PDF As", out_file, "PDF files (*.pdf)")
+                        new_file, ok = QFileDialog.getSaveFileName(
+                            self, "Save Split PDF As", out_file, "PDF files (*.pdf)"
+                        )
                         if ok and new_file:
                             if out_file == out1:
                                 out1 = new_file
@@ -238,7 +421,9 @@ class PreviewDialog(QDialog):
                 reader = PyPDF2.PdfReader(infile)
                 n = len(reader.pages)
                 if n < 2:
-                    QMessageBox.warning(self, "Split PDF", "PDF has less than 2 pages, cannot split.")
+                    QMessageBox.warning(
+                        self, "Split PDF", "PDF has less than 2 pages, cannot split."
+                    )
                     return
                 mid = n // 2
                 writer1 = PyPDF2.PdfWriter()
@@ -254,9 +439,14 @@ class PreviewDialog(QDialog):
             # Show a dialog with Quit and Continue options
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("PDF Split Complete")
-            msg_box.setText(f"PDF split into:\n{out1}\n{out2}\n\nWhat would you like to do next?")
+            msg_box.setText(
+                f"PDF split into:\n{out1}\n{out2}\n\nWhat would you like to do next?"
+            )
             quit_btn = msg_box.addButton("Quit Program", QMessageBox.DestructiveRole)
-            continue_btn = msg_box.addButton("Continue Compression (return to previous window)", QMessageBox.AcceptRole)
+            continue_btn = msg_box.addButton(
+                "Continue Compression (return to previous window)",
+                QMessageBox.AcceptRole,
+            )
             msg_box.setDefaultButton(continue_btn)
             msg_box.exec()
             if msg_box.clickedButton() == quit_btn:
@@ -265,21 +455,26 @@ class PreviewDialog(QDialog):
             # else: just return to the preview dialog
         except Exception as e:
             QMessageBox.critical(self, "Split PDF Error", f"Failed to split PDF:\n{e}")
+
     def accept_dialog(self):
         self.accepted_result = True
         self.output_file = self.filename_edit.text()
         self.accept()
+
     def get_result(self):
         if self.exec() == QDialog.Accepted and self.accepted_result:
             return True, self.output_file
         return False, self.output_file
 
+
 def show_loading_dialog(parent, text="Compressing PDF..."):
-    dlg = QProgressDialog(text, None, 0, 0, parent)
-    dlg.setWindowTitle("Please Wait")
+    dlg = QProgressDialog(text, None, 0, 100, parent)
+    dlg.setWindowTitle("Compressing PDF")
     dlg.setWindowModality(Qt.ApplicationModal)
     dlg.setCancelButton(None)
     dlg.setMinimumDuration(0)
+    dlg.setAutoClose(False)  # Prevent auto-closing
+    dlg.setAutoReset(False)  # Prevent auto-resetting
     dlg.setValue(0)
     # Center the dialog on the screen
     screen = QApplication.primaryScreen()
@@ -290,13 +485,16 @@ def show_loading_dialog(parent, text="Compressing PDF..."):
     dlg.move(x, y)
     return dlg
 
+
 def main():
     app = QApplication(sys.argv)
     # File selection
     if len(sys.argv) > 1:
         input_file = sys.argv[1]
     else:
-        input_file, _ = QFileDialog.getOpenFileName(None, "Select PDF File", "", "PDF files (*.pdf)")
+        input_file, _ = QFileDialog.getOpenFileName(
+            None, "Select PDF File", "", "PDF files (*.pdf)"
+        )
     if not input_file:
         return
     # Preset selection
@@ -317,34 +515,59 @@ def main():
     # Show loading dialog and compress in background
     loading = show_loading_dialog(None)
     thread = CompressThread(input_file, temp_output_file, dpi, quality)
-    result = {'success': False, 'error': ''}
+    result = {"success": False, "error": ""}
+
     def on_finished(success, error):
-        result['success'] = success
-        result['error'] = error
+        result["success"] = success
+        result["error"] = error
         loading.close()
+
+    def on_progress(current, total):
+        if total > 0:
+            percent = min(100, (current * 100) // total)
+            loading.setLabelText(f"Compressing PDF...\nPage {current} of {total}")
+            loading.setValue(percent)
+            # Force the dialog to repaint
+            QApplication.processEvents()
+
     thread.finished.connect(on_finished)
+    thread.progress.connect(on_progress)
     thread.start()
     loading.exec()
     thread.wait()
-    if not result['success']:
+    if not result["success"]:
         QMessageBox.critical(None, "Error", f"Compression failed:\n{result['error']}")
         if os.path.exists(temp_output_file):
             os.remove(temp_output_file)
         return
     # Preview dialog
-    default_output_file = str(Path(input_file).with_name(Path(input_file).stem + f"_compressed.pdf"))
+    default_output_file = str(
+        Path(input_file).with_name(Path(input_file).stem + f"_compressed.pdf")
+    )
     while True:
-        preview_dialog = PreviewDialog(input_file, temp_output_file, dpi, quality, default_output_file)
+        preview_dialog = PreviewDialog(
+            input_file, temp_output_file, dpi, quality, default_output_file
+        )
         accepted, final_output_file = preview_dialog.get_result()
         if accepted:
             # Check if output file exists and prompt user
             while os.path.exists(final_output_file):
-                resp = QMessageBox.question(None, "File Exists", f"The file '{final_output_file}' already exists. Overwrite?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+                resp = QMessageBox.question(
+                    None,
+                    "File Exists",
+                    f"The file '{final_output_file}' already exists. Overwrite?",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                )
                 if resp == QMessageBox.Yes:
                     break
                 elif resp == QMessageBox.No:
                     # Prompt for new filename
-                    new_file, ok = QFileDialog.getSaveFileName(None, "Save Compressed PDF As", final_output_file, "PDF files (*.pdf)")
+                    new_file, ok = QFileDialog.getSaveFileName(
+                        None,
+                        "Save Compressed PDF As",
+                        final_output_file,
+                        "PDF files (*.pdf)",
+                    )
                     if ok and new_file:
                         final_output_file = new_file
                     else:
@@ -357,14 +580,23 @@ def main():
             try:
                 shutil.move(temp_output_file, final_output_file)
             except Exception as e:
-                QMessageBox.critical(None, "Error", f"Could not save as new filename: {e}")
+                QMessageBox.critical(
+                    None, "Error", f"Could not save as new filename: {e}"
+                )
                 continue
-            QMessageBox.information(None, "Success", f"Compressed PDF saved as:\n{final_output_file}")
+            QMessageBox.information(
+                None, "Success", f"Compressed PDF saved as:\n{final_output_file}"
+            )
             break
         else:
             if os.path.exists(temp_output_file):
                 os.remove(temp_output_file)
-            retry = QMessageBox.question(None, "Retry", "Do you want to retry with different settings?", QMessageBox.Yes | QMessageBox.No)
+            retry = QMessageBox.question(
+                None,
+                "Retry",
+                "Do you want to retry with different settings?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
             if retry == QMessageBox.Yes:
                 # Re-run preset selection
                 preset_dialog = PresetDialog()
@@ -381,18 +613,24 @@ def main():
                 # Re-compress to temp file
                 loading = show_loading_dialog(None)
                 thread = CompressThread(input_file, temp_output_file, dpi, quality)
-                result = {'success': False, 'error': ''}
+                result = {"success": False, "error": ""}
                 thread.finished.connect(on_finished)
+                thread.progress.connect(on_progress)
                 thread.start()
                 loading.exec()
                 thread.wait()
-                if not result['success']:
-                    QMessageBox.critical(None, "Error", f"Compression failed:\n{result['error']}")
+                if not result["success"]:
+                    QMessageBox.critical(
+                        None, "Error", f"Compression failed:\n{result['error']}"
+                    )
                     if os.path.exists(temp_output_file):
                         os.remove(temp_output_file)
                     break
                 continue
             else:
                 break
+
+
 if __name__ == "__main__":
-    main() 
+    main()
+
