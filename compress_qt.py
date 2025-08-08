@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QSpinBox,
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
 import PyPDF2
 import string
 import re
@@ -53,12 +53,6 @@ def get_gs_executable():
 
 
 GS_EXECUTABLE = get_gs_executable()
-GS_CMD_TEMPLATE = (
-    "{gs_exe} -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=/screen "
-    "-dNOPAUSE -dQUIET -dBATCH -sOutputFile={out_file} -dDownsampleColorImages=true "
-    "-dColorImageResolution={dpi} -dColorImageDownsampleType=/Bicubic -dColorImageDownsampleThreshold=1.0 "
-    "{in_file}"
-)
 
 
 def get_file_size(path):
@@ -71,6 +65,17 @@ def get_file_size(path):
         return f"{size_kb:.2f} KB"
 
 
+def get_pdf_page_count(pdf_path):
+    """Get the number of pages in a PDF file"""
+    try:
+        with open(pdf_path, "rb") as file:
+            reader = PyPDF2.PdfReader(file)
+            return len(reader.pages)
+    except Exception as e:
+        print(f"Error getting page count: {e}")
+        return 0
+
+
 class CompressThread(QThread):
     finished = Signal(bool, str)
     progress = Signal(int, int)  # current_page, total_pages
@@ -81,11 +86,18 @@ class CompressThread(QThread):
         self.out_file = out_file
         self.dpi = dpi
         self.quality = quality
+        self.total_pages = 0
+        self.current_page = 0
 
     def run(self):
         temp_input = None
         process = None
         try:
+            # Get total pages for progress tracking
+            self.total_pages = get_pdf_page_count(self.in_file)
+            if self.total_pages > 0:
+                self.progress.emit(0, self.total_pages)
+            
             # Always copy to a temp file with ASCII-only name
             temp_dir = tempfile.gettempdir()
             temp_input = os.path.join(
@@ -96,16 +108,16 @@ class CompressThread(QThread):
             
             # Set environment variable for unbuffered output
             env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
             if sys.platform == "win32":
-                env["GSC_STDOUT"] = "1"  # Force stdout on Windows
-            else:
-                env["PYTHONUNBUFFERED"] = "1"
-            
+                # Force Ghostscript to output progress on Windows
+                env["GSC_QUIET"] = "0"
+                
             cmd_list = [
                 GS_EXECUTABLE,
                 "-dNOPAUSE",
                 "-dBATCH",
-                "-dSAFER",  # Add safer mode
+                "-dSAFER",
                 "-sDEVICE=pdfwrite",
                 "-dCompatibilityLevel=1.4",
                 "-dPDFSETTINGS=/screen",
@@ -114,113 +126,47 @@ class CompressThread(QThread):
                 f"-dColorImageResolution={self.dpi}",
                 "-dColorImageDownsampleType=/Bicubic",
                 "-dColorImageDownsampleThreshold=1.0",
-                input_for_gs,
             ]
+            
+            # Add verbose output for progress tracking
+            if sys.platform == "win32":
+                cmd_list.insert(-1, "-dDEBUG")  # Add debug output
+            
+            cmd_list.append(input_for_gs)
             
             kwargs = {
                 'env': env,
                 'stdout': subprocess.PIPE,
-                'stderr': subprocess.PIPE,
+                'stderr': subprocess.STDOUT,  # Redirect stderr to stdout
                 'text': True,
-                'bufsize': 0,  # Unbuffered output
+                'bufsize': 0,  # Unbuffered
+                'universal_newlines': True,
             }
             
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
                 
-            # Print command for debugging
             print(f"Running command: {' '.join(cmd_list)}")
                 
-            # Run gs with output capture
+            # Run gs with real-time output capture
             process = subprocess.Popen(cmd_list, **kwargs)
             
-            total_pages = None
-            current_page = 0
-            error_output = []
-            
-            import select
-            import io
-            
-            # Set up non-blocking reading for Unix systems
-            if sys.platform != "win32":
-                import fcntl
-                # Set stdout and stderr to non-blocking
-                for pipe in [process.stdout, process.stderr]:
-                    fd = pipe.fileno()
-                    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-                    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-            
-            def read_line(pipe):
-                if pipe is None:
-                    return None
-                if sys.platform == "win32":
-                    return pipe.readline()
-                else:
-                    try:
-                        return pipe.readline()
-                    except io.BlockingIOError:
-                        return None
-            
-            while process.poll() is None:
-                if sys.platform == "win32":
-                    stdout_line = read_line(process.stdout)
-                    stderr_line = read_line(process.stderr)
-                else:
-                    # Use select for non-blocking reads on Unix
-                    reads, _, _ = select.select([process.stdout, process.stderr], [], [], 0.1)
-                    stdout_line = read_line(process.stdout) if process.stdout in reads else None
-                    stderr_line = read_line(process.stderr) if process.stderr in reads else None
-                
-                # Process stdout
-                if stdout_line:
-                    line = stdout_line.strip()
-                    if line:
-                        error_output.append(f"STDOUT: {line}")
-                        print(f"GS Output: {line}")
-                        
-                        # Look for total pages info
-                        if "Processing pages" in line:
-                            match = re.search(r"Processing pages \d+ through (\d+)", line)
-                            if match:
-                                total_pages = int(match.group(1))
-                                self.progress.emit(0, total_pages)
-                        # Look for current page progress
-                        elif line.strip().startswith("Page"):
-                            try:
-                                current_page = int(line.strip().split()[1])
-                                self.progress.emit(current_page, total_pages or 0)
-                            except (IndexError, ValueError):
-                                pass
-                
-                # Process stderr
-                if stderr_line:
-                    line = stderr_line.strip()
-                    if line:
-                        error_output.append(f"STDERR: {line}")
-                        print(f"GS Error: {line}")
-                
-                # Small sleep to prevent CPU hogging
-                self.msleep(10)
-            
-            # Read any remaining output
-            stdout_remainder, stderr_remainder = process.communicate()
-            if stdout_remainder:
-                for line in stdout_remainder.splitlines():
-                    if line.strip():
-                        error_output.append(f"STDOUT: {line.strip()}")
-                        print(f"GS Output: {line.strip()}")
-            if stderr_remainder:
-                for line in stderr_remainder.splitlines():
-                    if line.strip():
-                        error_output.append(f"STDERR: {line.strip()}")
-                        print(f"GS Error: {line.strip()}")
-            
-            # Get the final return code
-            return_code = process.returncode
+            # Read output line by line in real-time
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    line = output.strip()
+                    print(f"GS: {line}")  # Debug output
+                    self.parse_progress_line(line)
+                    
+            # Wait for process to complete and get return code
+            return_code = process.poll()
             print(f"Process returned with code: {return_code}")
             
             if return_code != 0:
-                error_msg = "\n".join(error_output[-10:])  # Last 10 lines of output
+                error_msg = f"Ghostscript failed with return code {return_code}"
                 raise subprocess.CalledProcessError(return_code, cmd_list, error_msg)
             
             # Verify the output file exists and has size > 0
@@ -230,19 +176,21 @@ class CompressThread(QThread):
             if os.path.getsize(self.out_file) == 0:
                 raise Exception(f"Output file is empty: {self.out_file}")
             
-            # If we got here, everything succeeded
+            # Emit final progress
+            if self.total_pages > 0:
+                self.progress.emit(self.total_pages, self.total_pages)
+            
             print("Compression completed successfully!")
             self.finished.emit(True, "")
             
         except subprocess.CalledProcessError as e:
             error_msg = f"Process failed with code {e.returncode}:\n"
-            error_msg += f"Command: {' '.join(e.cmd)}\n"
-            error_msg += f"Output:\n{e.output if e.output else 'No output captured'}"
-            print(f"Error occurred: {error_msg}")  # Debug print
+            error_msg += f"Command: {' '.join(e.cmd)}"
+            print(f"Error occurred: {error_msg}")
             self.finished.emit(False, error_msg)
             
         except Exception as e:
-            print(f"Exception occurred: {str(e)}")  # Debug print
+            print(f"Exception occurred: {str(e)}")
             self.finished.emit(False, str(e))
             
         finally:
@@ -251,7 +199,7 @@ class CompressThread(QThread):
                 try:
                     if process.poll() is None:
                         process.terminate()
-                        process.wait(timeout=1)
+                        process.wait(timeout=5)
                 except Exception as e:
                     print(f"Error cleaning up process: {e}")
                     
@@ -261,6 +209,48 @@ class CompressThread(QThread):
                     os.remove(temp_input)
                 except Exception as e:
                     print(f"Error removing temp file: {e}")
+
+    def parse_progress_line(self, line):
+        """Parse Ghostscript output for progress information"""
+        try:
+            # Look for various progress patterns that Ghostscript outputs
+            patterns = [
+                # Standard page processing patterns
+                r"Processing pages \d+ through (\d+)",
+                r"Page (\d+)",
+                r"page (\d+)",
+                # Debug output patterns
+                r"%%Page:\s*(\d+)",
+                r"showpage,\s*page\s+(\d+)",
+                r".*page\s+(\d+)",
+                # PDF processing patterns
+                r".*Page\s+(\d+)\s+.*",
+                r".*processing\s+page\s+(\d+)",
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    page_num = int(match.group(1))
+                    if "through" in pattern.lower():
+                        # This gives us total pages
+                        if page_num > self.total_pages:
+                            self.total_pages = page_num
+                            self.progress.emit(0, self.total_pages)
+                    else:
+                        # This gives us current page
+                        self.current_page = min(page_num, self.total_pages) if self.total_pages > 0 else page_num
+                        if self.total_pages > 0:
+                            self.progress.emit(self.current_page, self.total_pages)
+                        print(f"Progress: Page {self.current_page} of {self.total_pages}")
+                    return
+                    
+            # Look for other indicators of progress
+            if any(keyword in line.lower() for keyword in ['processing', 'page', 'writing']):
+                print(f"Potential progress line: {line}")
+                
+        except (ValueError, IndexError, AttributeError) as e:
+            print(f"Error parsing line '{line}': {e}")
 
 
 class PresetDialog(QDialog):
@@ -606,7 +596,8 @@ def main():
                 choice = preset_dialog.get_choice()
                 if not choice:
                     break
-                if choice == "Manual":
+                # FIXED: Use the correct key for manual mode
+                if PRESETS[choice] == "manual":
                     dpi, quality = manual_settings()
                     if dpi is None or quality is None:
                         break
@@ -653,4 +644,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
