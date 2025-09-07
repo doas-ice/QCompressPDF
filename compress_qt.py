@@ -497,7 +497,7 @@ class PreviewDialog(QDialog):
         preview_btn = QPushButton("Preview PDF", self)
         preview_btn.clicked.connect(self.preview_pdf)
         btn_layout.addWidget(preview_btn)
-        split_btn = QPushButton("Split into 2 PDFs", self)
+        split_btn = QPushButton("Split PDF by File Size", self)
         split_btn.clicked.connect(self.split_pdf)
         btn_layout.addWidget(split_btn)
         accept_btn = QPushButton("Accept && Save", self)
@@ -553,71 +553,93 @@ class PreviewDialog(QDialog):
                     )
                     return
 
-                # Estimate split points to keep parts under 5MB
+                # Split into parts under 5MB each
                 split_files = []
-                current_part = 0
+                current_page = 0
 
-                while current_part < total_pages:
+                while current_page < total_pages:
                     part_writer = PyPDF2.PdfWriter()
-                    part_size = 0
-                    page_count = 0
+                    part_size_bytes = 0
+                    part_pages = []
 
-                    # Add pages until we approach 5MB or cover all remaining pages
-                    while current_part < total_pages and (part_size / 1024 / 1024 < 4.5 or page_count == 0):
-                        part_writer.add_page(reader.pages[current_part])
-                        current_part += 1
-                        page_count += 1
+                    # Add pages one by one, checking size after each addition
+                    temp_part_file = None
+                    while current_page < total_pages:
+                        # Add current page to the part
+                        part_writer.add_page(reader.pages[current_page])
+                        part_pages.append(current_page)
+                        current_page += 1
 
-                    # Create temp file to check actual size
-                    temp_part_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-                    part_writer.write(temp_part_file)
-                    temp_part_file.close()
+                        # Write to temp file to check actual size
+                        if temp_part_file:
+                            try:
+                                os.unlink(temp_part_file.name)
+                            except:
+                                pass
 
-                    actual_size = os.path.getsize(temp_part_file.name) / 1024 / 1024
-
-                    if actual_size > 5 and page_count > 1:
-                        # Remove last page and retry with fewer pages
-                        part_writer = PyPDF2.PdfWriter()
-                        current_part -= 1
-                        for i in range(current_part - page_count + 1, current_part):
-                            part_writer.add_page(reader.pages[i])
-                        current_part = current_part - page_count + 1  # Reset to try again
                         temp_part_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
                         part_writer.write(temp_part_file)
                         temp_part_file.close()
 
-                    # Generate output filename
-                    part_num = len(split_files) + 1
-                    output_file = f"{base}_{part_num}{ext}"
+                        part_size_bytes = os.path.getsize(temp_part_file.name)
 
-                    # Check if output file exists
-                    while os.path.exists(output_file):
-                        resp = QMessageBox.question(
-                            self,
-                            "File Exists",
-                            f"The file '{output_file}' already exists. Overwrite?",
-                            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                        )
-                        if resp == QMessageBox.Yes:
-                            break
-                        elif resp == QMessageBox.No:
-                            # Prompt for new filename
-                            new_file, ok = QFileDialog.getSaveFileName(
-                                self, "Save Split PDF As", output_file, "PDF files (*.pdf)"
-                            )
-                            if ok and new_file:
-                                output_file = new_file
-                            else:
-                                continue
+                        # If part is under 5MB or this is the last page, keep it
+                        if part_size_bytes <= 5 * 1024 * 1024 or current_page >= total_pages:
+                            continue
                         else:
-                            # Cancel
-                            temp_part_file.close()
-                            os.unlink(temp_part_file.name)
-                            return
+                            # Part is too big, remove the last page
+                            if len(part_pages) > 1:
+                                part_writer = PyPDF2.PdfWriter()
+                                part_pages.pop()  # Remove the last page
+                                current_page -= 1  # Go back to previous page
 
-                    # Move temp file to final location
-                    shutil.move(temp_part_file.name, output_file)
-                    split_files.append(output_file)
+                                # Rewrite part without the last page
+                                for page_idx in part_pages:
+                                    part_writer.add_page(reader.pages[page_idx])
+
+                                temp_part_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+                                part_writer.write(temp_part_file)
+                                temp_part_file.close()
+                            else:
+                                # Single page is too big, keep it anyway
+                                pass
+                            break
+
+                    # Move temp file to final output
+                    if part_pages:  # Only if we have pages in this part
+                        # Generate output filename
+                        part_num = len(split_files) + 1
+                        output_file = f"{base}_{part_num}{ext}"
+
+                        # Check if output file exists
+                        while os.path.exists(output_file):
+                            resp = QMessageBox.question(
+                                self,
+                                "File Exists",
+                                f"The file '{output_file}' already exists. Overwrite?",
+                                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                            )
+                            if resp == QMessageBox.Yes:
+                                break
+                            elif resp == QMessageBox.No:
+                                # Prompt for new filename
+                                new_file, ok = QFileDialog.getSaveFileName(
+                                    self, "Save Split PDF As", output_file, "PDF files (*.pdf)"
+                                )
+                                if ok and new_file:
+                                    output_file = new_file
+                                else:
+                                    continue
+                            else:
+                                # Cancel
+                                if temp_part_file:
+                                    os.unlink(temp_part_file.name)
+                                return
+
+                        # Move temp file to final location
+                        shutil.move(temp_part_file.name, output_file)
+                        split_files.append(output_file)
+                        temp_part_file = None
 
                 # Show results
                 size_info = "\n".join(
