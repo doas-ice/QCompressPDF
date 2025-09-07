@@ -21,21 +21,21 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QDialogButtonBox,
     QSpinBox,
+    QSlider,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 import PyPDF2
 import string
 import re
+import urllib.request
+import json
 
-PRESETS = {
-    "Low Compression, Highest Quality (300dpi, Q85)": {"dpi": 300, "quality": 85},
-    "Medium Compression, High Quality (200dpi, Q70)": {"dpi": 200, "quality": 70},
-    "High Compression, Medium Quality (150dpi, Q50)": {"dpi": 150, "quality": 50},
-    "Ultra Compression, Low Quality (100dpi, Q40)": {"dpi": 100, "quality": 40},
-    "Extreme Compression, Low Quality (72dpi, Q30)": {"dpi": 72, "quality": 30},
-    "Excessive Compression, Lower Quality (60dpi, Q20)": {"dpi": 60, "quality": 20},
-    "Radical Compression, Potato Quality (45dpi, Q15)": {"dpi": 45, "quality": 15},
-    "Manual DPI && Image Quality Selection": "manual",
+PRESETS_DPI = {
+    "300 DPI (Low Compression)": 300,
+    "200 DPI (Medium)": 200,
+    "150 DPI (High)": 150,
+    "100 DPI (Ultra)": 100,
+    "72 DPI (Extreme)": 72,
 }
 
 
@@ -76,16 +76,108 @@ def get_pdf_page_count(pdf_path):
         return 0
 
 
+CURRENT_VERSION = "1.3.0"
+GITHUB_REPO = "doas-ice/QCompressPDF"
+
+
+def check_for_updates():
+    """Check GitHub releases for newer version"""
+    try:
+        with urllib.request.urlopen(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=10) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode('utf-8'))
+                latest_version = data['tag_name'].lstrip('v').lstrip('V')
+                if latest_version > CURRENT_VERSION:
+                    return True, latest_version, data
+        return False, None, None
+    except Exception as e:
+        print(f"Update check failed: {e}")
+        return False, None, None
+
+
+class UpdateDialog(QDialog):
+    def __init__(self, new_version, release_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Update Available")
+        self.new_version = new_version
+        self.release_data = release_data
+        self.download_url = None
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel("A new version is available!"))
+        layout.addWidget(QLabel(f"Current: {CURRENT_VERSION} → New: {new_version}"))
+
+        if release_data and 'body' in release_data and release_data['body']:
+            layout.addWidget(QLabel("Release notes:"))
+            notes_text = QLabel(release_data['body'][:100] + "..." if len(release_data['body']) > 100 else release_data['body'])
+            notes_text.setWordWrap(True)
+            layout.addWidget(notes_text)
+
+        # Find Windows installer download
+        if release_data and 'assets' in release_data:
+            for asset in release_data['assets']:
+                if 'installer' in asset['name'].lower() or '/inno/' in asset['name'].lower() or '.exe' in asset['name'].lower():
+                    self.download_url = asset['browser_download_url']
+                    break
+
+        button_box = QDialogButtonBox()
+        if self.download_url:
+            self.update_btn = QPushButton("Download && Install", self)
+            self.update_btn.clicked.connect(self.download_and_install)
+            button_box.addButton(self.update_btn, QDialogButtonBox.AcceptRole)
+        self.skip_btn = QPushButton("Skip", self)
+        self.skip_btn.clicked.connect(self.reject)
+        button_box.addButton(self.skip_btn, QDialogButtonBox.RejectRole)
+
+        layout.addWidget(button_box)
+        self.setLayout(layout)
+
+    def download_and_install(self):
+        if not self.download_url:
+            QMessageBox.critical(self, "Error", "Download URL not found")
+            return
+
+        try:
+            temp_dir = tempfile.gettempdir()
+            installer_path = os.path.join(temp_dir, f"QCompressPDF_{self.new_version}_installer.exe")
+
+            # Download
+            with urllib.request.urlopen(self.download_url) as response:
+                with open(installer_path, 'wb') as f:
+                    f.write(response.read())
+
+            # Run installer
+            subprocess.run([installer_path], check=True)
+
+            # Close app after install
+            QMessageBox.information(self, "Success", f"Updated to version {self.new_version}\nPlease restart the application.")
+            self.accept()
+            QApplication.instance().quit()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Update Failed", f"Failed to download/install update: {e}")
+
+    def get_result(self):
+        return self.exec() == QDialog.Accepted
+
+
+def show_update_if_available():
+    """Check for updates and show dialog if available"""
+    has_update, new_version, release_data = check_for_updates()
+    if has_update:
+        dialog = UpdateDialog(new_version, release_data)
+        dialog.get_result()
+
+
 class CompressThread(QThread):
     finished = Signal(bool, str)
     progress = Signal(int, int)  # current_page, total_pages
 
-    def __init__(self, in_file, out_file, dpi, quality):
+    def __init__(self, in_file, out_file, dpi):
         super().__init__()
         self.in_file = in_file
         self.out_file = out_file
         self.dpi = dpi
-        self.quality = quality
         self.total_pages = 0
         self.current_page = 0
 
@@ -253,28 +345,85 @@ class CompressThread(QThread):
             print(f"Error parsing line '{line}': {e}")
 
 
-class PresetDialog(QDialog):
+class DpiSelectorDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Select Compression Preset")
-        self.setMinimumWidth(300)
+        self.setWindowTitle("Select DPI for Compression")
+        self.setMinimumWidth(350)
         layout = QVBoxLayout(self)
-        self.selected = None
-        for preset in PRESETS:
-            btn = QPushButton(preset, self)
-            btn.clicked.connect(lambda checked, p=preset: self.select_preset(p))
-            layout.addWidget(btn)
-        button_box = QDialogButtonBox(QDialogButtonBox.Cancel)
+        self.selected_dpi = 300  # Default
+
+        # DPI input box
+        dpi_input_layout = QHBoxLayout()
+        dpi_input_layout.addWidget(QLabel("DPI:"))
+        self.dpi_edit = QLineEdit("300", self)
+        self.dpi_edit.setMaxLength(4)
+        self.dpi_edit.textChanged.connect(self.update_from_input)
+        dpi_input_layout.addWidget(self.dpi_edit)
+        layout.addLayout(dpi_input_layout)
+
+        # Preset buttons
+        presets_layout = QVBoxLayout()
+        for preset_name, dpi_value in PRESETS_DPI.items():
+            btn = QPushButton(preset_name, self)
+            btn.clicked.connect(lambda checked, d=dpi_value: self.set_dpi(d))
+            presets_layout.addWidget(btn)
+        layout.addLayout(presets_layout)
+
+        # Slider
+        slider_layout = QHBoxLayout()
+        slider_layout.addWidget(QLabel("10"))
+        self.slider = QSlider(Qt.Horizontal, self)
+        self.slider.setRange(10, 600)
+        self.slider.setValue(300)
+        self.slider.setTickInterval(50)
+        self.slider.setTickPosition(QSlider.TicksBelow)
+        self.slider.valueChanged.connect(self.update_from_slider)
+        slider_layout.addWidget(self.slider)
+        slider_layout.addWidget(QLabel("600"))
+        layout.addLayout(slider_layout)
+
+        # Current DPI display
+        self.dpi_label = QLabel("Selected DPI: 300")
+        layout.addWidget(self.dpi_label)
+
+        # OK/Cancel buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
 
-    def select_preset(self, preset):
-        self.selected = preset
-        self.accept()
+        self.setLayout(layout)
 
-    def get_choice(self):
+    def set_dpi(self, dpi):
+        self.selected_dpi = dpi
+        self.dpi_edit.setText(str(dpi))
+        self.slider.setValue(dpi)
+        self.update_dpi_label()
+
+    def update_from_input(self):
+        try:
+            dpi = int(self.dpi_edit.text())
+            if 10 <= dpi <= 600:
+                self.selected_dpi = dpi
+                self.slider.setValue(dpi)
+                self.update_dpi_label()
+            else:
+                self.dpi_edit.setText(str(self.selected_dpi))  # Revert to last valid
+        except ValueError:
+            pass
+
+    def update_from_slider(self, value):
+        self.selected_dpi = value
+        self.dpi_edit.setText(str(value))
+        self.update_dpi_label()
+
+    def update_dpi_label(self):
+        self.dpi_label.setText(f"Selected DPI: {self.selected_dpi}")
+
+    def get_dpi(self):
         if self.exec() == QDialog.Accepted:
-            return self.selected
+            return self.selected_dpi
         return None
 
 
@@ -375,74 +524,124 @@ class PreviewDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Could not preview file: {e}")
 
     def split_pdf(self):
+        """Split PDF based on file size, ensuring each part is under 5MB"""
         base_output = self.filename_edit.text()
         base, ext = os.path.splitext(base_output)
-        out1 = base + "_1.pdf"
-        out2 = base + "_2.pdf"
+
         try:
-            # Check if split output files exist and prompt user
-            for out_file in [out1, out2]:
-                while os.path.exists(out_file):
-                    resp = QMessageBox.question(
-                        self,
-                        "File Exists",
-                        f"The file '{out_file}' already exists. Overwrite?",
-                        QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                    )
-                    if resp == QMessageBox.Yes:
-                        break
-                    elif resp == QMessageBox.No:
-                        # Prompt for new filename
-                        new_file, ok = QFileDialog.getSaveFileName(
-                            self, "Save Split PDF As", out_file, "PDF files (*.pdf)"
-                        )
-                        if ok and new_file:
-                            if out_file == out1:
-                                out1 = new_file
-                            else:
-                                out2 = new_file
-                            out_file = new_file
-                        else:
-                            continue
-                    else:
-                        return
-            # Python 3+ open() is Unicode-safe on Windows and Linux
+            total_size = os.path.getsize(self.temp_compressed) / 1024 / 1024  # Size in MB
+
+            if total_size <= 5:
+                # File is already small enough
+                resp = QMessageBox.question(
+                    self,
+                    "File Size OK",
+                    f"The file is only {total_size:.1f} MB. Do you still want to split it into smaller parts?",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if resp == QMessageBox.No:
+                    return
+
+            # Read the PDF
             with open(self.temp_compressed, "rb") as infile:
                 reader = PyPDF2.PdfReader(infile)
-                n = len(reader.pages)
-                if n < 2:
+                total_pages = len(reader.pages)
+
+                if total_pages < 2:
                     QMessageBox.warning(
                         self, "Split PDF", "PDF has less than 2 pages, cannot split."
                     )
                     return
-                mid = n // 2
-                writer1 = PyPDF2.PdfWriter()
-                writer2 = PyPDF2.PdfWriter()
-                for i in range(mid):
-                    writer1.add_page(reader.pages[i])
-                for i in range(mid, n):
-                    writer2.add_page(reader.pages[i])
-                with open(out1, "wb") as f1:
-                    writer1.write(f1)
-                with open(out2, "wb") as f2:
-                    writer2.write(f2)
-            # Show a dialog with Quit and Continue options
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("PDF Split Complete")
-            msg_box.setText(
-                f"PDF split into:\n{out1}\n{out2}\n\nWhat would you like to do next?"
-            )
-            quit_btn = msg_box.addButton("Quit Program", QMessageBox.DestructiveRole)
-            continue_btn = msg_box.addButton(
-                "Continue Compression (return to previous window)",
-                QMessageBox.AcceptRole,
-            )
-            msg_box.setDefaultButton(continue_btn)
-            msg_box.exec()
-            if msg_box.clickedButton() == quit_btn:
-                self.close()
-                QApplication.instance().quit()
-            # else: just return to the preview dialog
+
+                # Estimate split points to keep parts under 5MB
+                split_files = []
+                current_part = 0
+
+                while current_part < total_pages:
+                    part_writer = PyPDF2.PdfWriter()
+                    part_size = 0
+                    page_count = 0
+
+                    # Add pages until we approach 5MB or cover all remaining pages
+                    while current_part < total_pages and (part_size / 1024 / 1024 < 4.5 or page_count == 0):
+                        part_writer.add_page(reader.pages[current_part])
+                        current_part += 1
+                        page_count += 1
+
+                    # Create temp file to check actual size
+                    temp_part_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+                    part_writer.write(temp_part_file)
+                    temp_part_file.close()
+
+                    actual_size = os.path.getsize(temp_part_file.name) / 1024 / 1024
+
+                    if actual_size > 5 and page_count > 1:
+                        # Remove last page and retry with fewer pages
+                        part_writer = PyPDF2.PdfWriter()
+                        current_part -= 1
+                        for i in range(current_part - page_count + 1, current_part):
+                            part_writer.add_page(reader.pages[i])
+                        current_part = current_part - page_count + 1  # Reset to try again
+                        temp_part_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+                        part_writer.write(temp_part_file)
+                        temp_part_file.close()
+
+                    # Generate output filename
+                    part_num = len(split_files) + 1
+                    output_file = f"{base}_{part_num}{ext}"
+
+                    # Check if output file exists
+                    while os.path.exists(output_file):
+                        resp = QMessageBox.question(
+                            self,
+                            "File Exists",
+                            f"The file '{output_file}' already exists. Overwrite?",
+                            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                        )
+                        if resp == QMessageBox.Yes:
+                            break
+                        elif resp == QMessageBox.No:
+                            # Prompt for new filename
+                            new_file, ok = QFileDialog.getSaveFileName(
+                                self, "Save Split PDF As", output_file, "PDF files (*.pdf)"
+                            )
+                            if ok and new_file:
+                                output_file = new_file
+                            else:
+                                continue
+                        else:
+                            # Cancel
+                            temp_part_file.close()
+                            os.unlink(temp_part_file.name)
+                            return
+
+                    # Move temp file to final location
+                    shutil.move(temp_part_file.name, output_file)
+                    split_files.append(output_file)
+
+                # Show results
+                size_info = "\n".join(
+                    f"{f}: {os.path.getsize(f) / 1024 / 1024:.1f} MB"
+                    for f in split_files
+                )
+
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("PDF Split Complete")
+                msg_box.setText(
+                    f"PDF split into {len(split_files)} parts:\n\n{size_info}\n\nWhat would you like to do next?"
+                )
+                quit_btn = msg_box.addButton("Quit Program", QMessageBox.DestructiveRole)
+                continue_btn = msg_box.addButton(
+                    "Continue Compression (return to previous window)",
+                    QMessageBox.AcceptRole,
+                )
+                msg_box.setDefaultButton(continue_btn)
+                msg_box.exec()
+                if msg_box.clickedButton() == quit_btn:
+                    self.close()
+                    QApplication.instance().quit()
+                # else: just return to the preview dialog
+
         except Exception as e:
             QMessageBox.critical(self, "Split PDF Error", f"Failed to split PDF:\n{e}")
 
@@ -478,6 +677,8 @@ def show_loading_dialog(parent, text="Compressing PDF..."):
 
 def main():
     app = QApplication(sys.argv)
+    # Check for updates on startup
+    show_update_if_available()
     # File selection
     if len(sys.argv) > 1:
         input_file = sys.argv[1]
@@ -487,24 +688,18 @@ def main():
         )
     if not input_file:
         return
-    # Preset selection
-    preset_dialog = PresetDialog()
-    choice = preset_dialog.get_choice()
-    if not choice:
+    # DPI selection
+    dpi_dialog = DpiSelectorDialog()
+    dpi = dpi_dialog.get_dpi()
+    if dpi is None:
         return
-    if PRESETS[choice] == "manual":
-        dpi, quality = manual_settings()
-        if dpi is None or quality is None:
-            return
-    else:
-        preset = PRESETS[choice]
-        dpi, quality = preset["dpi"], preset["quality"]
+    quality = 85  # Dummy value for compatibility
     # Use temp file for output
     temp_dir = tempfile.gettempdir()
     temp_output_file = os.path.join(temp_dir, f"pdfcompress_{os.getpid()}.pdf")
     # Show loading dialog and compress in background
     loading = show_loading_dialog(None)
-    thread = CompressThread(input_file, temp_output_file, dpi, quality)
+    thread = CompressThread(input_file, temp_output_file, dpi)
     result = {"success": False, "error": ""}
 
     def on_finished(success, error):
@@ -591,22 +786,15 @@ def main():
                 QMessageBox.Yes | QMessageBox.No,
             )
             if retry == QMessageBox.Yes:
-                # Re-run preset selection
-                preset_dialog = PresetDialog()
-                choice = preset_dialog.get_choice()
-                if not choice:
+                # Re-run DPI selection
+                dpi_dialog = DpiSelectorDialog()
+                new_dpi = dpi_dialog.get_dpi()
+                if new_dpi is None:
                     break
-                # FIXED: Use the correct key for manual mode
-                if PRESETS[choice] == "manual":
-                    dpi, quality = manual_settings()
-                    if dpi is None or quality is None:
-                        break
-                else:
-                    preset = PRESETS[choice]
-                    dpi, quality = preset["dpi"], preset["quality"]
+                dpi = new_dpi
                 # Re-compress to temp file
                 loading = show_loading_dialog(None)
-                thread = CompressThread(input_file, temp_output_file, dpi, quality)
+                thread = CompressThread(input_file, temp_output_file, dpi)
                 result = {"success": False, "error": ""}
                 
                 def on_finished_retry(success, error):
