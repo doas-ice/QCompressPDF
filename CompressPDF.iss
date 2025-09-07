@@ -16,7 +16,7 @@ WizardStyle=modern
 
 [Files]
 ; Rename compress_qt.py to compress_qt.pyw on install
-Source: "compress_qt.pyw"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
+Source: "compress_qt.py"; DestName: "compress_qt.pyw"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
 Source: "requirements.txt"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
 Source: "pdf.ico"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
 
