@@ -89,7 +89,10 @@ begin
       GhostscriptInstalledLabel := TLabel.Create(DownloadPage);
       GhostscriptInstalledLabel.Caption := 'Installing Ghostscript...';
       GhostscriptInstalledLabel.WordWrap := True;
-      GhostscriptInstalledLabel.Top := ifthen(NeedsPython(), 120, 80);
+      if NeedsPython() then
+        GhostscriptInstalledLabel.Top := 120
+      else
+        GhostscriptInstalledLabel.Top := 80;
       GhostscriptInstalledLabel.Left := 0;
       GhostscriptInstalledLabel.Width := 500;
       GhostscriptInstalledLabel.Parent := DownloadPage.Surface;
