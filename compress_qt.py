@@ -228,8 +228,8 @@ class CompressThread(QThread):
             ]
 
             # Add verbose output for progress tracking
-            if sys.platform == "win32":
-                cmd_list.insert(-1, "-dDEBUG")  # Add debug output
+            # if sys.platform == "win32":
+            #     cmd_list.insert(-1, "-dDEBUG")  # Add debug output
 
             cmd_list.append(input_for_gs)
 
@@ -531,19 +531,17 @@ class PreviewDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Could not preview file: {e}")
 
     def split_pdf(self):
-        """Split PDF based on file size, ensuring each part is under 5MB"""
+        """Split PDF with smart balancing to avoid tiny final parts"""
         base_output = self.filename_edit.text()
         base, ext = os.path.splitext(base_output)
 
         try:
-            total_size = os.path.getsize(self.temp_compressed) / 1024 / 1024  # Size in MB
+            total_size_mb = os.path.getsize(self.temp_compressed) / 1024 / 1024
 
-            if total_size <= 5:
-                # File is already small enough
+            if total_size_mb <= 5:
                 resp = QMessageBox.question(
-                    self,
-                    "File Size OK",
-                    f"The file is only {total_size:.1f} MB. Do you still want to split it into smaller parts?",
+                    self, "File Size OK",
+                    f"The file is only {total_size_mb:.1f} MB. Do you still want to split it into smaller parts?",
                     QMessageBox.Yes | QMessageBox.No,
                 )
                 if resp == QMessageBox.No:
@@ -555,124 +553,231 @@ class PreviewDialog(QDialog):
                 total_pages = len(reader.pages)
 
                 if total_pages < 2:
-                    QMessageBox.warning(
-                        self, "Split PDF", "PDF has less than 2 pages, cannot split."
-                    )
+                    QMessageBox.warning(self, "Split PDF", "PDF has less than 2 pages, cannot split.")
                     return
 
-                # Split into parts under 5MB each
+                # STEP 1: Calculate page sizes by creating individual page PDFs
+                page_sizes_mb = []
+                print("Analyzing page sizes...")
+
+                for page_idx in range(total_pages):
+                    temp_page_writer = PyPDF2.PdfWriter()
+                    temp_page_writer.add_page(reader.pages[page_idx])
+
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_page_file:
+                        temp_page_writer.write(temp_page_file)
+                        temp_page_file.flush()
+                        page_size_mb = os.path.getsize(temp_page_file.name) / 1024 / 1024
+                        page_sizes_mb.append(page_size_mb)
+
+                    try:
+                        os.unlink(temp_page_file.name)
+                    except:
+                        pass
+
+                # STEP 2: Plan the split with balancing
+                max_part_size_mb = 5.0
+                min_final_part_size_mb = 2.5  # Minimum acceptable size for final part
+
+                # Try different split strategies
+                best_split = None
+                best_balance_score = float('inf')
+
+                # Try 2 to 6 parts (reasonable range)
+                max_reasonable_parts = min(6, max(2, int(total_size_mb / 2.5)))
+
+                for num_parts in range(2, max_reasonable_parts + 1):
+                    split_plan = self._plan_balanced_split(page_sizes_mb, num_parts, max_part_size_mb)
+                    if split_plan:
+                        # Calculate balance score (penalize tiny final parts heavily)
+                        sizes = [sum(page_sizes_mb[start:end]) for start, end in split_plan]
+                        min_size = min(sizes)
+                        max_size = max(sizes)
+                        avg_size = sum(sizes) / len(sizes)
+
+                        # Heavy penalty for final parts smaller than min_final_part_size_mb
+                        final_size = sizes[-1]
+                        size_penalty = 0
+                        if final_size < min_final_part_size_mb:
+                            size_penalty = (min_final_part_size_mb - final_size) * 10
+
+                        # Balance score: prefer smaller variance + penalty for tiny final parts
+                        balance_score = (max_size - min_size) / avg_size + size_penalty
+
+                        if balance_score < best_balance_score and max_size <= max_part_size_mb:
+                            best_balance_score = balance_score
+                            best_split = split_plan
+                            print(f"Better split found with {num_parts} parts, balance score: {balance_score:.2f}")
+                            print(f"  Sizes: {[f'{size:.1f}MB' for size in sizes]}")
+
+                if not best_split:
+                    # Fallback to simple sequential split if planning fails
+                    print("Falling back to sequential split")
+                    best_split = self._sequential_split(page_sizes_mb, max_part_size_mb)
+
+                # STEP 3: Create the actual split files
                 split_files = []
-                current_page = 0
 
-                while current_page < total_pages:
+                for part_idx, (start_page, end_page) in enumerate(best_split):
                     part_writer = PyPDF2.PdfWriter()
-                    part_size_bytes = 0
-                    part_pages = []
 
-                    # Add pages one by one, checking size after each addition
-                    temp_part_file = None
-                    while current_page < total_pages:
-                        # Add current page to the part
-                        part_writer.add_page(reader.pages[current_page])
-                        part_pages.append(current_page)
-                        current_page += 1
+                    # Add pages to this part
+                    for page_idx in range(start_page, end_page):
+                        part_writer.add_page(reader.pages[page_idx])
 
-                        # Write to temp file to check actual size
-                        if temp_part_file:
-                            try:
-                                os.unlink(temp_part_file.name)
-                            except:
-                                pass
+                    # Generate output filename
+                    part_num = part_idx + 1
+                    output_file = f"{base}_part{part_num}{ext}"
 
-                        temp_part_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-                        part_writer.write(temp_part_file)
-                        temp_part_file.close()
-
-                        part_size_bytes = os.path.getsize(temp_part_file.name)
-
-                        # If part is under 5MB or this is the last page, keep it
-                        if part_size_bytes <= 5 * 1024 * 1024 or current_page >= total_pages:
-                            continue
-                        else:
-                            # Part is too big, remove the last page
-                            if len(part_pages) > 1:
-                                part_writer = PyPDF2.PdfWriter()
-                                part_pages.pop()  # Remove the last page
-                                current_page -= 1  # Go back to previous page
-
-                                # Rewrite part without the last page
-                                for page_idx in part_pages:
-                                    part_writer.add_page(reader.pages[page_idx])
-
-                                temp_part_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-                                part_writer.write(temp_part_file)
-                                temp_part_file.close()
-                            else:
-                                # Single page is too big, keep it anyway
-                                pass
+                    # Handle file conflicts
+                    while os.path.exists(output_file):
+                        resp = QMessageBox.question(
+                            self, "File Exists",
+                            f"The file '{output_file}' already exists. Overwrite?",
+                            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                        )
+                        if resp == QMessageBox.Yes:
                             break
-
-                    # Move temp file to final output
-                    if part_pages:  # Only if we have pages in this part
-                        # Generate output filename
-                        part_num = len(split_files) + 1
-                        output_file = f"{base}_{part_num}{ext}"
-
-                        # Check if output file exists
-                        while os.path.exists(output_file):
-                            resp = QMessageBox.question(
-                                self,
-                                "File Exists",
-                                f"The file '{output_file}' already exists. Overwrite?",
-                                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                        elif resp == QMessageBox.No:
+                            new_file, ok = QFileDialog.getSaveFileName(
+                                self, "Save Split PDF As", output_file, "PDF files (*.pdf)"
                             )
-                            if resp == QMessageBox.Yes:
-                                break
-                            elif resp == QMessageBox.No:
-                                # Prompt for new filename
-                                new_file, ok = QFileDialog.getSaveFileName(
-                                    self, "Save Split PDF As", output_file, "PDF files (*.pdf)"
-                                )
-                                if ok and new_file:
-                                    output_file = new_file
-                                else:
-                                    continue
+                            if ok and new_file:
+                                output_file = new_file
                             else:
-                                # Cancel
-                                if temp_part_file:
-                                    os.unlink(temp_part_file.name)
-                                return
+                                continue
+                        else:
+                            return
 
-                        # Move temp file to final location
-                        shutil.move(temp_part_file.name, output_file)
-                        split_files.append(output_file)
-                        temp_part_file = None
+                    # Write the part
+                    with open(output_file, 'wb') as out_file:
+                        part_writer.write(out_file)
+
+                    split_files.append(output_file)
+                    part_size_mb = os.path.getsize(output_file) / 1024 / 1024
+                    page_count = end_page - start_page
+                    print(f"Created part {part_num}: pages {start_page+1}-{end_page}, {page_count} pages, {part_size_mb:.1f}MB")
 
                 # Show results
-                size_info = "\n".join(
-                    f"{f}: {os.path.getsize(f) / 1024 / 1024:.1f} MB"
-                    for f in split_files
-                )
+                size_info = []
+                for i, f in enumerate(split_files, 1):
+                    size_mb = os.path.getsize(f) / 1024 / 1024
+                    start_page, end_page = best_split[i-1]
+                    page_count = end_page - start_page
+                    size_info.append(f"Part {i}: {size_mb:.1f} MB ({page_count} pages)")
+
+                total_parts = len(split_files)
+                avg_size = sum(os.path.getsize(f) for f in split_files) / total_parts / 1024 / 1024
+                size_range = max(os.path.getsize(f) for f in split_files) / 1024 / 1024 - min(os.path.getsize(f) for f in split_files) / 1024 / 1024
 
                 msg_box = QMessageBox(self)
-                msg_box.setWindowTitle("PDF Split Complete")
+                msg_box.setWindowTitle("PDF Split Complete - Balanced")
                 msg_box.setText(
-                    f"PDF split into {len(split_files)} parts:\n\n{size_info}\n\nWhat would you like to do next?"
+                    f"PDF split into {total_parts} balanced parts:\n"
+                    f"Average size: {avg_size:.1f} MB\n"
+                    f"Size variation: {size_range:.1f} MB\n\n" +
+                    "\n".join(size_info) +
+                    f"\n\nWhat would you like to do next?"
                 )
                 quit_btn = msg_box.addButton("Quit Program", QMessageBox.DestructiveRole)
-                continue_btn = msg_box.addButton(
-                    "Continue Compression (return to previous window)",
-                    QMessageBox.AcceptRole,
-                )
+                continue_btn = msg_box.addButton("Continue Compression", QMessageBox.AcceptRole)
                 msg_box.setDefaultButton(continue_btn)
                 msg_box.exec()
+
                 if msg_box.clickedButton() == quit_btn:
                     self.close()
                     QApplication.instance().quit()
-                # else: just return to the preview dialog
 
         except Exception as e:
             QMessageBox.critical(self, "Split PDF Error", f"Failed to split PDF:\n{e}")
+
+    def _plan_balanced_split(self, page_sizes_mb, num_parts, max_part_size_mb):
+        """Plan a balanced split of pages into the specified number of parts"""
+        total_pages = len(page_sizes_mb)
+        total_size = sum(page_sizes_mb)
+        target_size_per_part = total_size / num_parts
+
+        # Use dynamic programming approach to find optimal split points
+        splits = []
+        current_start = 0
+
+        for part_idx in range(num_parts):
+            if part_idx == num_parts - 1:
+                # Last part gets all remaining pages
+                splits.append((current_start, total_pages))
+                break
+
+            # Find the best end point for this part
+            best_end = current_start + 1
+            best_score = float('inf')
+
+            # Try different end points
+            for end_candidate in range(current_start + 1, total_pages + 1):
+                part_size = sum(page_sizes_mb[current_start:end_candidate])
+
+                if part_size > max_part_size_mb:
+                    break  # Too big, stop here
+
+                # Calculate remaining pages and estimated final part size
+                remaining_pages = total_pages - end_candidate
+                remaining_parts = num_parts - part_idx - 1
+
+                if remaining_parts == 0:
+                    continue  # This would be the last part, but we're not on the last iteration
+
+                remaining_size = sum(page_sizes_mb[end_candidate:])
+                avg_remaining_size = remaining_size / remaining_parts if remaining_parts > 0 else 0
+
+                # Score based on how close this part is to target size and balance with remaining
+                size_deviation = abs(part_size - target_size_per_part)
+                balance_penalty = abs(avg_remaining_size - target_size_per_part) if remaining_parts > 0 else 0
+
+                # Prefer splits that avoid tiny final parts
+                final_part_penalty = 0
+                if remaining_parts == 1 and remaining_size < 1.5:  # Final part would be tiny
+                    final_part_penalty = 5.0
+
+                score = size_deviation + balance_penalty + final_part_penalty
+
+                if score < best_score:
+                    best_score = score
+                    best_end = end_candidate
+
+            splits.append((current_start, best_end))
+            current_start = best_end
+
+        # Validate the split
+        if len(splits) != num_parts or splits[-1][1] != total_pages:
+            return None
+
+        # Check if all parts are within size limits
+        for start, end in splits:
+            part_size = sum(page_sizes_mb[start:end])
+            if part_size > max_part_size_mb:
+                return None
+
+        return splits
+
+    def _sequential_split(self, page_sizes_mb, max_part_size_mb):
+        """Fallback sequential split method"""
+        splits = []
+        current_start = 0
+        current_size = 0
+
+        for page_idx, page_size in enumerate(page_sizes_mb):
+            if current_size + page_size > max_part_size_mb and current_start < page_idx:
+                # Start new part
+                splits.append((current_start, page_idx))
+                current_start = page_idx
+                current_size = page_size
+            else:
+                current_size += page_size
+
+        # Add final part
+        if current_start < len(page_sizes_mb):
+            splits.append((current_start, len(page_sizes_mb)))
+
+        return splits
 
     def accept_dialog(self):
         self.accepted_result = True
