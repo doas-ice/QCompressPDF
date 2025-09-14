@@ -36,6 +36,9 @@ PRESETS_DPI = {
     "150 DPI (High)": 150,
     "100 DPI (Ultra)": 100,
     "72 DPI (Extreme)": 72,
+    "60 DPI (Extreme)": 60,
+    "50 DPI (Extreme)": 50,
+    "45 DPI (Extreme)": 45,
 }
 
 
@@ -76,7 +79,7 @@ def get_pdf_page_count(pdf_path):
         return 0
 
 
-CURRENT_VERSION = "1.3.4"
+CURRENT_VERSION = "1.3.5"
 GITHUB_REPO = "doas-ice/QCompressPDF"
 
 
@@ -189,7 +192,7 @@ class CompressThread(QThread):
             self.total_pages = get_pdf_page_count(self.in_file)
             if self.total_pages > 0:
                 self.progress.emit(0, self.total_pages)
-            
+
             # Always copy to a temp file with ASCII-only name
             temp_dir = tempfile.gettempdir()
             temp_input = os.path.join(
@@ -197,35 +200,39 @@ class CompressThread(QThread):
             )
             shutil.copy2(self.in_file, temp_input)
             input_for_gs = temp_input
-            
+
             # Set environment variable for unbuffered output
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
             if sys.platform == "win32":
                 # Force Ghostscript to output progress on Windows
                 env["GSC_QUIET"] = "0"
-                
+
             cmd_list = [
                 GS_EXECUTABLE,
                 "-dNOPAUSE",
                 "-dBATCH",
                 "-dSAFER",
                 "-sDEVICE=pdfwrite",
-                "-dCompatibilityLevel=1.4",
-                "-dPDFSETTINGS=/screen",
+                "-dCompatibilityLevel=1.7",
+                # "-dPDFSETTINGS=/screen",
                 f"-sOutputFile={self.out_file}",
                 "-dDownsampleColorImages=true",
                 f"-dColorImageResolution={self.dpi}",
                 "-dColorImageDownsampleType=/Bicubic",
-                "-dColorImageDownsampleThreshold=1.0",
+                "-dAutoFilterColorImages=false",
+                "-dDownsampleGrayImages=true",
+                f"-dGrayImageResolution={self.dpi}",
+                "-dGrayImageDownsampleType=/Bicubic",
+                "-dMonoImageFilter=/CCITTFaxEncode",
             ]
-            
+
             # Add verbose output for progress tracking
             if sys.platform == "win32":
                 cmd_list.insert(-1, "-dDEBUG")  # Add debug output
-            
+
             cmd_list.append(input_for_gs)
-            
+
             kwargs = {
                 'env': env,
                 'stdout': subprocess.PIPE,
@@ -234,15 +241,15 @@ class CompressThread(QThread):
                 'bufsize': 0,  # Unbuffered
                 'universal_newlines': True,
             }
-            
+
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-                
+
             print(f"Running command: {' '.join(cmd_list)}")
-                
+
             # Run gs with real-time output capture
             process = subprocess.Popen(cmd_list, **kwargs)
-            
+
             # Read output line by line in real-time
             while True:
                 output = process.stdout.readline()
@@ -252,39 +259,39 @@ class CompressThread(QThread):
                     line = output.strip()
                     print(f"GS: {line}")  # Debug output
                     self.parse_progress_line(line)
-                    
+
             # Wait for process to complete and get return code
             return_code = process.poll()
             print(f"Process returned with code: {return_code}")
-            
+
             if return_code != 0:
                 error_msg = f"Ghostscript failed with return code {return_code}"
                 raise subprocess.CalledProcessError(return_code, cmd_list, error_msg)
-            
+
             # Verify the output file exists and has size > 0
             if not os.path.exists(self.out_file):
                 raise Exception(f"Output file was not created at: {self.out_file}")
-            
+
             if os.path.getsize(self.out_file) == 0:
                 raise Exception(f"Output file is empty: {self.out_file}")
-            
+
             # Emit final progress
             if self.total_pages > 0:
                 self.progress.emit(self.total_pages, self.total_pages)
-            
+
             print("Compression completed successfully!")
             self.finished.emit(True, "")
-            
+
         except subprocess.CalledProcessError as e:
             error_msg = f"Process failed with code {e.returncode}:\n"
             error_msg += f"Command: {' '.join(e.cmd)}"
             print(f"Error occurred: {error_msg}")
             self.finished.emit(False, error_msg)
-            
+
         except Exception as e:
             print(f"Exception occurred: {str(e)}")
             self.finished.emit(False, str(e))
-            
+
         finally:
             # Clean up process resources
             if process:
@@ -294,7 +301,7 @@ class CompressThread(QThread):
                         process.wait(timeout=5)
                 except Exception as e:
                     print(f"Error cleaning up process: {e}")
-                    
+
             # Clean up temp file
             if temp_input and os.path.exists(temp_input):
                 try:
@@ -319,7 +326,7 @@ class CompressThread(QThread):
                 r".*Page\s+(\d+)\s+.*",
                 r".*processing\s+page\s+(\d+)",
             ]
-            
+
             for pattern in patterns:
                 match = re.search(pattern, line, re.IGNORECASE)
                 if match:
@@ -336,11 +343,11 @@ class CompressThread(QThread):
                             self.progress.emit(self.current_page, self.total_pages)
                         print(f"Progress: Page {self.current_page} of {self.total_pages}")
                     return
-                    
+
             # Look for other indicators of progress
             if any(keyword in line.lower() for keyword in ['processing', 'page', 'writing']):
                 print(f"Potential progress line: {line}")
-                
+
         except (ValueError, IndexError, AttributeError) as e:
             print(f"Error parsing line '{line}': {e}")
 
@@ -818,7 +825,7 @@ def main():
                 loading = show_loading_dialog(None)
                 thread = CompressThread(input_file, temp_output_file, dpi)
                 result = {"success": False, "error": ""}
-                
+
                 def on_finished_retry(success, error):
                     result["success"] = success
                     result["error"] = error
@@ -834,7 +841,7 @@ def main():
                         # On Windows, we need to ensure the progress bar updates immediately
                         if sys.platform == "win32":
                             loading.repaint()
-                
+
                 thread.finished.connect(on_finished_retry)
                 thread.progress.connect(on_progress_retry)
                 thread.start()
