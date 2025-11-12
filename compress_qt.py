@@ -35,7 +35,7 @@ PRESETS_DPI = {
     "200 DPI (Medium)": 200,
     "150 DPI (High)": 150,
     "100 DPI (Ultra)": 100,
-    "72 DPI (Extreme)": 72,
+    "70 DPI (Extreme)": 70,
     "60 DPI (Extreme)": 60,
     "50 DPI (Extreme)": 50,
     "45 DPI (Extreme)": 45,
@@ -377,8 +377,15 @@ class DpiSelectorDialog(QDialog):
             presets_layout.addWidget(btn)
         layout.addLayout(presets_layout)
 
-        # Slider
+        # Slider with +/- buttons
         slider_layout = QHBoxLayout()
+        
+        # Decrease button
+        self.decrease_btn = QPushButton("-", self)
+        self.decrease_btn.setMaximumWidth(40)
+        self.decrease_btn.clicked.connect(self.decrease_dpi)
+        slider_layout.addWidget(self.decrease_btn)
+        
         slider_layout.addWidget(QLabel("10"))
         self.slider = QSlider(Qt.Horizontal, self)
         self.slider.setRange(10, 600)
@@ -388,6 +395,13 @@ class DpiSelectorDialog(QDialog):
         self.slider.valueChanged.connect(self.update_from_slider)
         slider_layout.addWidget(self.slider)
         slider_layout.addWidget(QLabel("600"))
+        
+        # Increase button
+        self.increase_btn = QPushButton("+", self)
+        self.increase_btn.setMaximumWidth(40)
+        self.increase_btn.clicked.connect(self.increase_dpi)
+        slider_layout.addWidget(self.increase_btn)
+        
         layout.addLayout(slider_layout)
 
         # Current DPI display
@@ -427,6 +441,16 @@ class DpiSelectorDialog(QDialog):
 
     def update_dpi_label(self):
         self.dpi_label.setText(f"Selected DPI: {self.selected_dpi}")
+
+    def increase_dpi(self):
+        """Increase DPI by 1"""
+        new_dpi = min(600, self.selected_dpi + 1)
+        self.set_dpi(new_dpi)
+
+    def decrease_dpi(self):
+        """Decrease DPI by 1"""
+        new_dpi = max(10, self.selected_dpi - 1)
+        self.set_dpi(new_dpi)
 
     def get_dpi(self):
         if self.exec() == QDialog.Accepted:
@@ -497,9 +521,30 @@ class PreviewDialog(QDialog):
         )
         info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(info)
-        layout.addWidget(QLabel("Output filename:"))
-        self.filename_edit = QLineEdit(default_output, self)
-        layout.addWidget(self.filename_edit)
+        
+        # Output file configuration section
+        layout.addWidget(QLabel("Output directory:"))
+        dir_layout = QHBoxLayout()
+        self.directory_edit = QLineEdit(os.path.dirname(default_output), self)
+        dir_layout.addWidget(self.directory_edit)
+        browse_btn = QPushButton("Browse...", self)
+        browse_btn.clicked.connect(self.browse_directory)
+        dir_layout.addWidget(browse_btn)
+        layout.addLayout(dir_layout)
+        
+        layout.addWidget(QLabel("Filename (without extension):"))
+        filename_layout = QHBoxLayout()
+        base_name = os.path.splitext(os.path.basename(default_output))[0]
+        self.filename_edit = QLineEdit(base_name, self)
+        filename_layout.addWidget(self.filename_edit)
+        paste_btn = QPushButton("Paste", self)
+        paste_btn.clicked.connect(self.paste_filename)
+        filename_layout.addWidget(paste_btn)
+        layout.addLayout(filename_layout)
+        
+        layout.addWidget(QLabel("File extension:"))
+        self.extension_edit = QLineEdit(".pdf", self)
+        layout.addWidget(self.extension_edit)
         btn_layout = QHBoxLayout()
         preview_btn = QPushButton("Preview PDF", self)
         preview_btn.clicked.connect(self.preview_pdf)
@@ -779,9 +824,36 @@ class PreviewDialog(QDialog):
 
         return splits
 
+    def browse_directory(self):
+        """Open directory browser dialog"""
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select Output Directory", self.directory_edit.text()
+        )
+        if directory:
+            self.directory_edit.setText(directory)
+
+    def paste_filename(self):
+        """Paste filename from clipboard"""
+        clipboard = QApplication.clipboard()
+        text = clipboard.text()
+        if text:
+            # Remove any path separators and extension from pasted text
+            text = os.path.basename(text)
+            text = os.path.splitext(text)[0]
+            self.filename_edit.setText(text)
+
     def accept_dialog(self):
         self.accepted_result = True
-        self.output_file = self.filename_edit.text()
+        # Reconstruct full path from separate components
+        directory = self.directory_edit.text()
+        filename = self.filename_edit.text()
+        extension = self.extension_edit.text()
+        
+        # Ensure extension starts with a dot
+        if extension and not extension.startswith('.'):
+            extension = '.' + extension
+        
+        self.output_file = os.path.join(directory, filename + extension)
         self.accept()
 
     def get_result(self):
