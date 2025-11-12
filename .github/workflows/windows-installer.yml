@@ -40,6 +40,16 @@ jobs:
         run: |
           if (!(Test-Path CompressPDF.iss)) { exit 1 }
         shell: pwsh
+  
+      - name: Update CURRENT_VERSION in compress_qt.py from Git tag
+        # This step extracts the pushed tag (refs/tags/vX.Y.Z), strips the leading 'v' if present,
+        # and replaces the CURRENT_VERSION = "..." line in compress_qt.py before building.
+        run: |
+          $tag = "${{ github.ref }}" -replace '^refs/tags/',''
+          $ver = $tag -replace '^v',''
+          Write-Host "Git tag = $tag ; Setting CURRENT_VERSION to $ver"
+          (Get-Content compress_qt.py) -replace 'CURRENT_VERSION\s*=\s*".*"', "CURRENT_VERSION = `"$ver`"" | Set-Content -Encoding utf8 compress_qt.py
+        shell: pwsh
 
       - name: Build Windows Installer with iscc
         run: |
