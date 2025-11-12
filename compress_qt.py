@@ -80,6 +80,7 @@ def get_pdf_page_count(pdf_path):
 
 
 CURRENT_VERSION = "1.4.0"
+
 GITHUB_REPO = "doas-ice/QCompressPDF"
 
 
