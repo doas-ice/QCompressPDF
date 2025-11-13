@@ -760,10 +760,10 @@ class PreviewDialog(QDialog):
                 # Show results
                 size_info = []
                 for i, f in enumerate(split_files, 1):
-                    size_mb = os.path.getsize(f) / 1024 / 1024
+                    part_size_mb = os.path.getsize(f) / 1024 / 1024
                     start_page, end_page = best_split[i-1]
                     page_count = end_page - start_page
-                    size_info.append(f"Part {i}: {size_mb:.1f} MB ({page_count} pages)")
+                    size_info.append(f"Part {i}: {part_size_mb:.1f} MB ({page_count} pages)")
 
                 total_parts = len(split_files)
                 avg_size = sum(os.path.getsize(f) for f in split_files) / total_parts / 1024 / 1024
@@ -951,8 +951,9 @@ class PreviewDialog(QDialog):
         current_size = 0
 
         for page_idx, page_size in enumerate(page_sizes_mb):
+            # Check if adding this page would exceed the limit
             if current_size + page_size > max_part_size_mb and current_start < page_idx:
-                # Start new part
+                # Start new part (finish current part)
                 splits.append((current_start, page_idx))
                 current_start = page_idx
                 current_size = page_size
