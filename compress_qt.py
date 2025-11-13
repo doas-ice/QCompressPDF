@@ -212,7 +212,6 @@ class CompressThread(QThread):
                 GS_EXECUTABLE,
                 "-dNOPAUSE",
                 "-dBATCH",
-                "-dSAFER",
                 "-sDEVICE=pdfwrite",
                 "-dCompatibilityLevel=1.7",
                 # "-dPDFSETTINGS=/screen",
@@ -220,11 +219,19 @@ class CompressThread(QThread):
                 "-dDownsampleColorImages=true",
                 f"-dColorImageResolution={self.dpi}",
                 "-dColorImageDownsampleType=/Bicubic",
-                "-dAutoFilterColorImages=false",
+                "-dColorImageDownsampleThreshold=1.0",
+                "-dAutoFilterColorImages=true",
                 "-dDownsampleGrayImages=true",
                 f"-dGrayImageResolution={self.dpi}",
                 "-dGrayImageDownsampleType=/Bicubic",
+                "-dGrayImageDownsampleThreshold=1.0",
+                "-dDownsampleMonoImages=true",
                 "-dMonoImageFilter=/CCITTFaxEncode",
+                "-dPreserveHalftoneInfo=false",
+                "-dPreserveOverprintSettings=false",
+                "-dTransferFunctionInfo=/Apply",
+                "-UCRandBGInfo=/Remove",
+                "-dPreserveMarkedContent=false"
             ]
 
             # Add verbose output for progress tracking
