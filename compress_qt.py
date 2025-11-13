@@ -496,6 +496,84 @@ def manual_settings(parent=None):
     return dlg.get_values()
 
 
+class SplitModeDialog(QDialog):
+    """Dialog to select split mode: Auto, By Size, or By Number"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Split Mode")
+        self.setMinimumWidth(350)
+        layout = QVBoxLayout(self)
+        
+        # Add description
+        layout.addWidget(QLabel("Choose how to split the PDF:"))
+        
+        # Mode selection
+        self.mode = None
+        self.size_mb = 5.0
+        self.num_splits = 2
+        
+        # Auto mode button
+        auto_btn = QPushButton("Auto - Split under 5 MB with smart distribution", self)
+        auto_btn.clicked.connect(lambda: self.select_mode("auto"))
+        layout.addWidget(auto_btn)
+        
+        # By Size mode button
+        size_btn = QPushButton("By Size - Specify custom size limit", self)
+        size_btn.clicked.connect(lambda: self.select_mode("size"))
+        layout.addWidget(size_btn)
+        
+        # By Number mode button
+        number_btn = QPushButton("By Number - Specify number of splits", self)
+        number_btn.clicked.connect(lambda: self.select_mode("number"))
+        layout.addWidget(number_btn)
+        
+        # Cancel button
+        cancel_btn = QPushButton("Cancel", self)
+        cancel_btn.clicked.connect(self.reject)
+        layout.addWidget(cancel_btn)
+        
+        self.setLayout(layout)
+    
+    def select_mode(self, mode):
+        """Handle mode selection"""
+        self.mode = mode
+        
+        if mode == "size":
+            # Ask for size limit
+            size, ok = QInputDialog.getDouble(
+                self, "Split by Size",
+                "Enter maximum size per part (MB):",
+                5.0, 0.1, 100.0, 1
+            )
+            if ok:
+                self.size_mb = size
+                self.accept()
+            else:
+                self.mode = None
+        
+        elif mode == "number":
+            # Ask for number of splits
+            num, ok = QInputDialog.getInt(
+                self, "Split by Number",
+                "Enter number of splits:",
+                2, 2, 20, 1
+            )
+            if ok:
+                self.num_splits = num
+                self.accept()
+            else:
+                self.mode = None
+        
+        else:  # auto mode
+            self.accept()
+    
+    def get_result(self):
+        """Return the selected mode and parameters"""
+        if self.exec() == QDialog.Accepted and self.mode:
+            return self.mode, self.size_mb, self.num_splits
+        return None, None, None
+
+
 class PreviewDialog(QDialog):
     def __init__(
         self, original, temp_compressed, dpi, quality, default_output, parent=None
@@ -552,7 +630,7 @@ class PreviewDialog(QDialog):
         preview_btn = QPushButton("Preview PDF", self)
         preview_btn.clicked.connect(self.preview_pdf)
         btn_layout.addWidget(preview_btn)
-        split_btn = QPushButton("Split PDF by File Size", self)
+        split_btn = QPushButton("Split PDF", self)
         split_btn.clicked.connect(self.split_pdf)
         btn_layout.addWidget(split_btn)
         accept_btn = QPushButton("Accept && Save", self)
@@ -579,21 +657,19 @@ class PreviewDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Could not preview file: {e}")
 
     def split_pdf(self):
-        """Split PDF with smart balancing to avoid tiny final parts"""
+        """Split PDF based on user-selected mode: Auto, By Size, or By Number"""
+        # Show mode selection dialog
+        mode_dialog = SplitModeDialog(self)
+        mode, size_mb, num_splits = mode_dialog.get_result()
+        
+        if not mode:
+            return  # User cancelled
+        
         base_output = self.filename_edit.text()
         base, ext = os.path.splitext(base_output)
 
         try:
             total_size_mb = os.path.getsize(self.temp_compressed) / 1024 / 1024
-
-            if total_size_mb <= 5:
-                resp = QMessageBox.question(
-                    self, "File Size OK",
-                    f"The file is only {total_size_mb:.1f} MB. Do you still want to split it into smaller parts?",
-                    QMessageBox.Yes | QMessageBox.No,
-                )
-                if resp == QMessageBox.No:
-                    return
 
             # Read the PDF
             with open(self.temp_compressed, "rb") as infile:
@@ -623,45 +699,20 @@ class PreviewDialog(QDialog):
                     except:
                         pass
 
-                # STEP 2: Plan the split with balancing
-                max_part_size_mb = 5.0
-                min_final_part_size_mb = 2.5  # Minimum acceptable size for final part
-
-                # Try different split strategies
-                best_split = None
-                best_balance_score = float('inf')
-
-                # Try 2 to 6 parts (reasonable range)
-                max_reasonable_parts = min(6, max(2, int(total_size_mb / 2.5)))
-
-                for num_parts in range(2, max_reasonable_parts + 1):
-                    split_plan = self._plan_balanced_split(page_sizes_mb, num_parts, max_part_size_mb)
-                    if split_plan:
-                        # Calculate balance score (penalize tiny final parts heavily)
-                        sizes = [sum(page_sizes_mb[start:end]) for start, end in split_plan]
-                        min_size = min(sizes)
-                        max_size = max(sizes)
-                        avg_size = sum(sizes) / len(sizes)
-
-                        # Heavy penalty for final parts smaller than min_final_part_size_mb
-                        final_size = sizes[-1]
-                        size_penalty = 0
-                        if final_size < min_final_part_size_mb:
-                            size_penalty = (min_final_part_size_mb - final_size) * 10
-
-                        # Balance score: prefer smaller variance + penalty for tiny final parts
-                        balance_score = (max_size - min_size) / avg_size + size_penalty
-
-                        if balance_score < best_balance_score and max_size <= max_part_size_mb:
-                            best_balance_score = balance_score
-                            best_split = split_plan
-                            print(f"Better split found with {num_parts} parts, balance score: {balance_score:.2f}")
-                            print(f"  Sizes: {[f'{size:.1f}MB' for size in sizes]}")
+                # STEP 2: Plan the split based on mode
+                if mode == "auto":
+                    best_split = self._split_auto(page_sizes_mb, total_size_mb)
+                elif mode == "size":
+                    best_split = self._split_by_size(page_sizes_mb, size_mb)
+                elif mode == "number":
+                    best_split = self._split_by_number(page_sizes_mb, num_splits)
+                else:
+                    QMessageBox.critical(self, "Error", "Invalid split mode")
+                    return
 
                 if not best_split:
-                    # Fallback to simple sequential split if planning fails
-                    print("Falling back to sequential split")
-                    best_split = self._sequential_split(page_sizes_mb, max_part_size_mb)
+                    QMessageBox.warning(self, "Split PDF", "Could not find a valid split plan.")
+                    return
 
                 # STEP 3: Create the actual split files
                 split_files = []
@@ -718,10 +769,12 @@ class PreviewDialog(QDialog):
                 avg_size = sum(os.path.getsize(f) for f in split_files) / total_parts / 1024 / 1024
                 size_range = max(os.path.getsize(f) for f in split_files) / 1024 / 1024 - min(os.path.getsize(f) for f in split_files) / 1024 / 1024
 
+                mode_name = {"auto": "Auto (5 MB)", "size": f"By Size ({size_mb} MB)", "number": f"By Number ({num_splits} parts)"}[mode]
+                
                 msg_box = QMessageBox(self)
-                msg_box.setWindowTitle("PDF Split Complete - Balanced")
+                msg_box.setWindowTitle(f"PDF Split Complete - {mode_name}")
                 msg_box.setText(
-                    f"PDF split into {total_parts} balanced parts:\n"
+                    f"PDF split into {total_parts} parts:\n"
                     f"Average size: {avg_size:.1f} MB\n"
                     f"Size variation: {size_range:.1f} MB\n\n" +
                     "\n".join(size_info) +
@@ -738,6 +791,91 @@ class PreviewDialog(QDialog):
 
         except Exception as e:
             QMessageBox.critical(self, "Split PDF Error", f"Failed to split PDF:\n{e}")
+
+    def _split_auto(self, page_sizes_mb, total_size_mb):
+        """Auto mode: Split PDFs under 5 MB with smart distribution for last 2 parts"""
+        max_part_size_mb = 5.0
+        min_final_part_size_mb = 2.0  # Minimum acceptable size for final part
+        
+        # If file is already under 5 MB, ask user if they still want to split
+        if total_size_mb <= max_part_size_mb:
+            return None  # Will show warning in main method
+        
+        # Try different split strategies
+        best_split = None
+        best_balance_score = float('inf')
+        
+        # Calculate reasonable number of parts
+        min_parts = max(2, int(total_size_mb / max_part_size_mb))
+        max_parts = min(10, min_parts + 3)  # Try a few more than minimum
+        
+        for num_parts in range(min_parts, max_parts + 1):
+            split_plan = self._plan_balanced_split(page_sizes_mb, num_parts, max_part_size_mb)
+            if split_plan:
+                # Calculate balance score (penalize tiny final parts heavily)
+                sizes = [sum(page_sizes_mb[start:end]) for start, end in split_plan]
+                min_size = min(sizes)
+                max_size = max(sizes)
+                avg_size = sum(sizes) / len(sizes)
+                
+                # Check if all parts are under max size
+                if max_size > max_part_size_mb:
+                    continue
+                
+                # Heavy penalty for final parts smaller than min_final_part_size_mb
+                final_size = sizes[-1]
+                size_penalty = 0
+                if final_size < min_final_part_size_mb:
+                    size_penalty = (min_final_part_size_mb - final_size) * 10
+                
+                # Balance score: prefer smaller variance + penalty for tiny final parts
+                balance_score = (max_size - min_size) / avg_size + size_penalty
+                
+                if balance_score < best_balance_score:
+                    best_balance_score = balance_score
+                    best_split = split_plan
+                    print(f"Better split found with {num_parts} parts, balance score: {balance_score:.2f}")
+                    print(f"  Sizes: {[f'{size:.1f}MB' for size in sizes]}")
+        
+        if not best_split:
+            # Fallback to simple sequential split if planning fails
+            print("Falling back to sequential split")
+            best_split = self._sequential_split(page_sizes_mb, max_part_size_mb)
+        
+        return best_split
+
+    def _split_by_size(self, page_sizes_mb, max_size_mb):
+        """By Size mode: Split PDF into parts under the specified size"""
+        # Use sequential split with user-specified size
+        return self._sequential_split(page_sizes_mb, max_size_mb)
+
+    def _split_by_number(self, page_sizes_mb, num_parts):
+        """By Number mode: Split PDF into exactly the specified number of parts"""
+        total_pages = len(page_sizes_mb)
+        
+        if num_parts > total_pages:
+            QMessageBox.warning(
+                self, "Invalid Split", 
+                f"Cannot split {total_pages} pages into {num_parts} parts."
+            )
+            return None
+        
+        # Simple equal distribution by page count
+        pages_per_part = total_pages // num_parts
+        extra_pages = total_pages % num_parts
+        
+        splits = []
+        current_start = 0
+        
+        for part_idx in range(num_parts):
+            # Distribute extra pages to first parts
+            part_size = pages_per_part + (1 if part_idx < extra_pages else 0)
+            current_end = current_start + part_size
+            splits.append((current_start, current_end))
+            current_start = current_end
+        
+        return splits
+
 
     def _plan_balanced_split(self, page_sizes_mb, num_parts, max_part_size_mb):
         """Plan a balanced split of pages into the specified number of parts"""
