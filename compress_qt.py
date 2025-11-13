@@ -701,7 +701,19 @@ class PreviewDialog(QDialog):
 
                 # STEP 2: Plan the split based on mode
                 if mode == "auto":
-                    best_split = self._split_auto(page_sizes_mb, total_size_mb)
+                    # Check if file is already under 5 MB
+                    if total_size_mb <= 5.0:
+                        resp = QMessageBox.question(
+                            self, "File Size OK",
+                            f"The file is only {total_size_mb:.1f} MB. Do you still want to split it?",
+                            QMessageBox.Yes | QMessageBox.No,
+                        )
+                        if resp == QMessageBox.No:
+                            return
+                        # User wants to split anyway, use size mode with 5MB
+                        best_split = self._split_by_size(page_sizes_mb, 5.0)
+                    else:
+                        best_split = self._split_auto(page_sizes_mb, total_size_mb)
                 elif mode == "size":
                     best_split = self._split_by_size(page_sizes_mb, size_mb)
                 elif mode == "number":
@@ -796,10 +808,6 @@ class PreviewDialog(QDialog):
         """Auto mode: Split PDFs under 5 MB with smart distribution for last 2 parts"""
         max_part_size_mb = 5.0
         min_final_part_size_mb = 2.0  # Minimum acceptable size for final part
-        
-        # If file is already under 5 MB, ask user if they still want to split
-        if total_size_mb <= max_part_size_mb:
-            return None  # Will show warning in main method
         
         # Try different split strategies
         best_split = None
