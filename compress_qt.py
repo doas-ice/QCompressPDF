@@ -231,7 +231,7 @@ class CompressThread(QThread):
                 "-dMonoImageFilter=/CCITTFaxEncode",
 
                 # --- Free Optimizations (Speed without quality loss) ---
-                "-dFastWebView=true",                # faster final PDF output processing
+                # "-dFastWebView=true",                # faster final PDF output processing     # Removed due to crashing
                 "-dDetectDuplicateImages=true",      # deduplicate identical images
                 "-dUseFlateCompression=true",        # optimal general stream compression
                 "-dOptimize=true",                   # ghostscript internal speedups
