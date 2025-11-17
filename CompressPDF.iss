@@ -26,8 +26,8 @@ Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\pyt
 ; Download and install Ghostscript silently
 Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\gs-installer.exe'; $url = 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe'; Invoke-WebRequest -Uri $url -OutFile $downloadedFile; Start-Process -FilePath $downloadedFile -ArgumentList '/S' -Wait"""; StatusMsg: "Downloading and Installing Ghostscript..."; Flags: runhidden waituntilterminated; Check: NeedsGhostscript
 ; Install Python dependencies using the installed Python
-Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."; Flags: runhidden waituntilterminated ignoreerrors
-Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install -r ""{userappdata}\CompressPDF\requirements.txt"""; StatusMsg: "Installing Python dependencies from requirements.txt..."; Flags: runhidden waituntilterminated ignoreerrors
+Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."; Flags: runhidden waituntilterminated
+Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install -r ""{userappdata}\CompressPDF\requirements.txt"""; StatusMsg: "Installing Python dependencies from requirements.txt..."; Flags: runhidden waituntilterminated
 
 [Registry]
 ; Add context menu for PDF files
