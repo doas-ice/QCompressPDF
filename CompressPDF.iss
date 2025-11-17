@@ -102,7 +102,8 @@ end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  if (PageID = DownloadPage.ID) and not (NeedsPython() or NeedsGhostscript()) then
+  // Only compare PageID to DownloadPage.ID if DownloadPage has been created
+  if (DownloadPage <> nil) and (PageID = DownloadPage.ID) and not (NeedsPython() or NeedsGhostscript()) then
   begin
     Result := True;
   end else
