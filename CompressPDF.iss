@@ -22,24 +22,21 @@ Source: "pdf.ico"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
 
 [Run]
 ; Download and install Python silently if not present
-Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\python-installer.exe'; $url = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'; Invoke-WebRequest -Uri $url -OutFile $downloadedFile; Start-Process -FilePath $downloadedFile -ArgumentList '/quiet','InstallAllUsers=1','PrependPath=1','Include_pip=1' -Wait"""; StatusMsg: "Downloading and Installing Python..."; Flags: waituntilterminated; Check: NeedsPython
+Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\python-installer.exe'; $url = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'; Invoke-WebRequest -Uri $url -OutFile $downloadedFile; Start-Process -FilePath $downloadedFile -ArgumentList '/quiet','InstallAllUsers=1','PrependPath=1','Include_pip=1' -Wait"""; StatusMsg: "Downloading and Installing Python..."; Flags: runhidden waituntilterminated; Check: NeedsPython
 ; Download and install Ghostscript silently
-Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\gs-installer.exe'; $url = 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe'; Invoke-WebRequest -Uri $url -OutFile $downloadedFile; Start-Process -FilePath $downloadedFile -ArgumentList '/S' -Wait"""; StatusMsg: "Downloading and Installing Ghostscript..."; Flags: waituntilterminated; Check: NeedsGhostscript
-; Install Python dependencies using py launcher or python from PATH
-Filename: "py.exe"; Parameters: "-3 -m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."; Flags: runhidden waituntilterminated skipiferror
-Filename: "py.exe"; Parameters: "-3 -m pip install -r ""{userappdata}\CompressPDF\requirements.txt"""; StatusMsg: "Installing Python dependencies from requirements.txt..."; Flags: runhidden waituntilterminated skipiferror
-; Fallback: try using python from PATH if py launcher fails
-Filename: "python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip (fallback)..."; Flags: runhidden waituntilterminated skipiferror; Check: not FileExists(ExpandConstant('{sys}\py.exe'))
-Filename: "python.exe"; Parameters: "-m pip install -r ""{userappdata}\CompressPDF\requirements.txt"""; StatusMsg: "Installing Python dependencies (fallback)..."; Flags: runhidden waituntilterminated skipiferror; Check: not FileExists(ExpandConstant('{sys}\py.exe'))
+Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\gs-installer.exe'; $url = 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe'; Invoke-WebRequest -Uri $url -OutFile $downloadedFile; Start-Process -FilePath $downloadedFile -ArgumentList '/S' -Wait"""; StatusMsg: "Downloading and Installing Ghostscript..."; Flags: runhidden waituntilterminated; Check: NeedsGhostscript
+; Install Python dependencies using the installed Python
+Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."; Flags: runhidden waituntilterminated skipiferror
+Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install -r ""{userappdata}\CompressPDF\requirements.txt"""; StatusMsg: "Installing Python dependencies from requirements.txt..."; Flags: runhidden waituntilterminated skipiferror
 
 [Registry]
-; Add context menu for PDF files - using py launcher for better compatibility
+; Add context menu for PDF files
 Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: ""; ValueData: "Compress PDF (QCompressPDF)"; Flags: uninsdeletekey
 Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF"; ValueType: string; ValueName: "Icon"; ValueData: "{userappdata}\CompressPDF\pdf.ico"; Flags: uninsdeletevalue
-Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF\command"; ValueType: string; ValueName: ""; ValueData: """pythonw.exe"" ""{userappdata}\CompressPDF\compress_qt.pyw"" ""%1"""; Flags: uninsdeletekey
+Root: HKCR; Subkey: "SystemFileAssociations\.pdf\shell\CompressPDF\command"; ValueType: string; ValueName: ""; ValueData: """{autopf}\Python311\pythonw.exe"" ""{userappdata}\CompressPDF\compress_qt.pyw"" ""%1"""; Flags: uninsdeletekey
 
 [Icons]
-Name: "{userprograms}\Compress PDF (QCompressPDF)"; Filename: "pythonw.exe"; Parameters: """{userappdata}\CompressPDF\compress_qt.pyw"""; WorkingDir: "{userappdata}\CompressPDF"; IconFilename: "{userappdata}\CompressPDF\pdf.ico"
+Name: "{userprograms}\Compress PDF (QCompressPDF)"; Filename: "{userappdata}\CompressPDF\compress_qt.pyw"; WorkingDir: "{userappdata}\CompressPDF"; IconFilename: "{userappdata}\CompressPDF\pdf.ico"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{userappdata}\CompressPDF"
@@ -51,33 +48,8 @@ var
   GhostscriptInstalledLabel: TLabel;
 
 function NeedsPython: Boolean;
-var
-  ResultCode: Integer;
 begin
-  // Check if Python is available in PATH or via py launcher
-  Result := True;
-  // Try py launcher first
-  if Exec('py.exe', '-3 --version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
-  begin
-    Result := False;
-    Exit;
-  end;
-  // Try python.exe in PATH
-  if Exec('python.exe', '--version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
-  begin
-    Result := False;
-    Exit;
-  end;
-  // Check common installation paths
-  if FileExists(ExpandConstant('{autopf}\Python311\pythonw.exe')) or
-     FileExists(ExpandConstant('{autopf}\Python312\pythonw.exe')) or
-     FileExists(ExpandConstant('{autopf}\Python313\pythonw.exe')) or
-     FileExists(ExpandConstant('{localappdata}\Programs\Python\Python311\pythonw.exe')) or
-     FileExists(ExpandConstant('{localappdata}\Programs\Python\Python312\pythonw.exe')) or
-     FileExists(ExpandConstant('{localappdata}\Programs\Python\Python313\pythonw.exe')) then
-  begin
-    Result := False;
-  end;
+  Result := not FileExists(ExpandConstant('{autopf}\Python311\pythonw.exe'));
 end;
 
 function NeedsGhostscript: Boolean;
