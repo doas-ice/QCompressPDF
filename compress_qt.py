@@ -214,19 +214,29 @@ class CompressThread(QThread):
                 "-dBATCH",
                 "-sDEVICE=pdfwrite",
                 "-dCompatibilityLevel=1.7",
-                # "-dPDFSETTINGS=/screen",
                 f"-sOutputFile={self.out_file}",
+
+                # --- Accurate Downsampling ---
                 "-dDownsampleColorImages=true",
                 f"-dColorImageResolution={self.dpi}",
                 "-dColorImageDownsampleType=/Bicubic",
                 "-dColorImageDownsampleThreshold=1.0",
-                "-dAutoFilterColorImages=true",
+
                 "-dDownsampleGrayImages=true",
                 f"-dGrayImageResolution={self.dpi}",
                 "-dGrayImageDownsampleType=/Bicubic",
                 "-dGrayImageDownsampleThreshold=1.0",
+
                 "-dDownsampleMonoImages=true",
                 "-dMonoImageFilter=/CCITTFaxEncode",
+
+                # --- Free Optimizations (Speed without quality loss) ---
+                "-dFastWebView=true",                # faster final PDF output processing
+                "-dDetectDuplicateImages=true",      # deduplicate identical images
+                "-dUseFlateCompression=true",        # optimal general stream compression
+                "-dOptimize=true",                   # ghostscript internal speedups
+
+                # --- Cleanup / safer defaults ---
                 "-dPreserveHalftoneInfo=false",
                 "-dPreserveOverprintSettings=false",
                 "-dTransferFunctionInfo=/Apply",
@@ -673,7 +683,11 @@ class PreviewDialog(QDialog):
             return  # User cancelled
         
         base_output = self.filename_edit.text()
-        base, ext = os.path.splitext(base_output)
+        ext = self.extension_edit.text()
+        # Ensure extension starts with a dot
+        if ext and not ext.startswith('.'):
+            ext = '.' + ext
+        base = base_output
 
         try:
             total_size_mb = os.path.getsize(self.temp_compressed) / 1024 / 1024

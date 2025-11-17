@@ -22,12 +22,12 @@ Source: "pdf.ico"; DestDir: "{userappdata}\CompressPDF"; Flags: ignoreversion
 
 [Run]
 ; Download and install Python silently if not present
-Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\python-installer.exe'; $url = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'; Invoke-WebRequest -Uri $url -OutFile $downloadedFile; Start-Process -FilePath $downloadedFile -ArgumentList '/quiet','InstallAllUsers=1','PrependPath=1','Include_pip=1' -Wait"""; StatusMsg: "Downloading and Installing Python..."; Check: NeedsPython
+Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\python-installer.exe'; $url = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'; Invoke-WebRequest -Uri $url -OutFile $downloadedFile; Start-Process -FilePath $downloadedFile -ArgumentList '/quiet','InstallAllUsers=1','PrependPath=1','Include_pip=1' -Wait"""; StatusMsg: "Downloading and Installing Python..."; Flags: runhidden waituntilterminated; Check: NeedsPython
 ; Download and install Ghostscript silently
-Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\gs-installer.exe'; $url = 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe'; Invoke-WebRequest -Uri $url -OutFile $downloadedFile; Start-Process -FilePath $downloadedFile -ArgumentList '/S' -Wait"""; StatusMsg: "Downloading and Installing Ghostscript..."; Check: NeedsGhostscript
+Filename: "powershell.exe"; Parameters: "-Command ""$downloadedFile = '{tmp}\gs-installer.exe'; $url = 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe'; Invoke-WebRequest -Uri $url -OutFile $downloadedFile; Start-Process -FilePath $downloadedFile -ArgumentList '/S' -Wait"""; StatusMsg: "Downloading and Installing Ghostscript..."; Flags: runhidden waituntilterminated; Check: NeedsGhostscript
 ; Install Python dependencies using the installed Python
-Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."
-Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install -r ""{userappdata}\CompressPDF\requirements.txt"""; StatusMsg: "Installing Python dependencies from requirements.txt..."
+Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install --upgrade pip"; StatusMsg: "Upgrading pip..."; Flags: runhidden waituntilterminated skipiferror
+Filename: "{autopf}\Python311\python.exe"; Parameters: "-m pip install -r ""{userappdata}\CompressPDF\requirements.txt"""; StatusMsg: "Installing Python dependencies from requirements.txt..."; Flags: runhidden waituntilterminated skipiferror
 
 [Registry]
 ; Add context menu for PDF files
