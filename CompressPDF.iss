@@ -58,7 +58,7 @@ begin
   if EnableDebugLogging then
   begin
     LogFile := ExpandConstant('{userappdata}\CompressPDF\install_debug.log');
-    SaveStringToFile(LogFile, FormatDateTime('yyyy-mm-dd hh:nn:ss', Now) + ' - ' + Message + #13#10, True);
+    SaveStringToFile(LogFile, GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + ' - ' + Message + #13#10, True);
     Log('DEBUG: ' + Message);
   end;
 end;
