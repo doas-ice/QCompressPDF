@@ -58,7 +58,7 @@ begin
   if EnableDebugLogging then
   begin
     LogFile := ExpandConstant('{userappdata}\CompressPDF\install_debug.log');
-    SaveStringToFile(LogFile, FormatDateTime('yyyy-mm-dd hh:nn:ss', Now) + ' - ' + Message + #13#10, True);
+    SaveStringToFile(LogFile, FormatDateTime('yyyy-MM-dd hh:nn:ss', Now) + ' - ' + Message + #13#10, True);
     Log('DEBUG: ' + Message);
   end;
 end;
@@ -262,12 +262,20 @@ end;
 
 function GetPythonExePath(Param: String): String;
 begin
+  // Ensure PythonPath is initialized
+  if PythonPath = '' then
+    PythonPath := GetPythonPath();
+  
   Result := AddBackslash(PythonPath) + 'python.exe';
   LogDebug('Using Python path for pip: ' + Result);
 end;
 
 function GetPythonwExePath(Param: String): String;
 begin
+  // Ensure PythonPath is initialized
+  if PythonPath = '' then
+    PythonPath := GetPythonPath();
+  
   Result := AddBackslash(PythonPath) + 'pythonw.exe';
   LogDebug('Using Pythonw path for shortcuts: ' + Result);
 end;
