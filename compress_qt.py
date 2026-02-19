@@ -43,16 +43,99 @@ PRESETS_DPI = {
 
 
 def get_gs_executable():
+    def _find_on_path(names: list[str]) -> str | None:
+        path_env = os.environ.get("PATH", "")
+        for name in names:
+            for folder in path_env.split(os.pathsep):
+                folder = folder.strip('"')
+                if not folder:
+                    continue
+                candidate = os.path.join(folder, name)
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    return candidate
+        return None
+
+    def _find_windows_registry() -> str | None:
+        try:
+            import winreg  # type: ignore
+
+            reg_roots = [
+                r"SOFTWARE\GPL Ghostscript",
+                r"SOFTWARE\Artifex Ghostscript",
+                r"SOFTWARE\WOW6432Node\GPL Ghostscript",
+                r"SOFTWARE\WOW6432Node\Artifex Ghostscript",
+            ]
+            for base_key in reg_roots:
+                try:
+                    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base_key) as k:
+                        # Choose the highest version subkey
+                        versions: list[str] = []
+                        idx = 0
+                        while True:
+                            try:
+                                versions.append(winreg.EnumKey(k, idx))
+                                idx += 1
+                            except OSError:
+                                break
+                        for ver in sorted(versions, reverse=True):
+                            try:
+                                with winreg.OpenKey(k, ver) as vk:
+                                    for value_name in ("GS_DLL", "GS_LIB"):
+                                        try:
+                                            dll_or_lib, _ = winreg.QueryValueEx(vk, value_name)
+                                        except OSError:
+                                            continue
+                                        if isinstance(dll_or_lib, str) and dll_or_lib:
+                                            # GS_DLL is typically ...\bin\gsdll64.dll
+                                            bin_dir = os.path.dirname(dll_or_lib)
+                                            for exe in ("gswin64c.exe", "gswin32c.exe"):
+                                                candidate = os.path.join(bin_dir, exe)
+                                                if os.path.isfile(candidate):
+                                                    return candidate
+                            except OSError:
+                                continue
+                except OSError:
+                    continue
+        except Exception:
+            return None
+        return None
+
+    def _find_common_locations() -> str | None:
+        # Typical install: C:\Program Files\gs\gsX.YY.Z\bin\gswin64c.exe
+        program_files = [
+            os.environ.get("ProgramFiles", ""),
+            os.environ.get("ProgramFiles(x86)", ""),
+        ]
+        for pf in filter(None, program_files):
+            gs_root = os.path.join(pf, "gs")
+            if not os.path.isdir(gs_root):
+                continue
+            try:
+                versions = sorted(os.listdir(gs_root), reverse=True)
+            except OSError:
+                continue
+            for ver in versions:
+                bin_dir = os.path.join(gs_root, ver, "bin")
+                for exe in ("gswin64c.exe", "gswin32c.exe"):
+                    candidate = os.path.join(bin_dir, exe)
+                    if os.path.isfile(candidate):
+                        return candidate
+        return None
+
     if sys.platform.startswith("win"):
-        for exe in ["gswin64c", "gswin32c", "gs"]:
-            if any(
-                os.access(os.path.join(path, exe + ".exe"), os.X_OK)
-                for path in os.environ["PATH"].split(os.pathsep)
-            ):
-                return exe
-        return "gswin64c"  # fallback
-    else:
-        return "gs"
+        from_path = _find_on_path(["gswin64c.exe", "gswin32c.exe", "gs.exe"])
+        if from_path:
+            return from_path
+        from_reg = _find_windows_registry()
+        if from_reg:
+            return from_reg
+        from_common = _find_common_locations()
+        if from_common:
+            return from_common
+        # Fallback to name; subprocess will try PATH.
+        return "gswin64c"
+
+    return "gs"
 
 
 GS_EXECUTABLE = get_gs_executable()
