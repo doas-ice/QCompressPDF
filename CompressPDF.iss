@@ -204,10 +204,10 @@ end;
 
 function ReadTextFileOrEmpty(const Path: String): String;
 var
-  S: String;
+  S: AnsiString;
 begin
   if LoadStringFromFile(Path, S) then
-    Result := Trim(S)
+    Result := Trim(String(S))
   else
     Result := '';
 end;
