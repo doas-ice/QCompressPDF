@@ -65,6 +65,38 @@ begin
   Result := '"' + S + '"';
 end;
 
+procedure SplitStringToArray(const Value, Delimiter: String; var Parts: TArrayOfString);
+var
+  Remaining: String;
+  P: Integer;
+  Count: Integer;
+begin
+  SetArrayLength(Parts, 0);
+  Remaining := Value;
+
+  // Handle empty input
+  if Remaining = '' then
+    Exit;
+
+  while True do
+  begin
+    P := Pos(Delimiter, Remaining);
+    Count := GetArrayLength(Parts);
+    SetArrayLength(Parts, Count + 1);
+
+    if P = 0 then
+    begin
+      Parts[Count] := Remaining;
+      Break;
+    end
+    else
+    begin
+      Parts[Count] := Copy(Remaining, 1, P - 1);
+      Delete(Remaining, 1, P + Length(Delimiter) - 1);
+    end;
+  end;
+end;
+
 procedure AppendLogLine(const Message: String);
 begin
   if LogFilePath = '' then
@@ -357,7 +389,7 @@ begin
   PathEnv := GetEnv('PATH');
   if PathEnv = '' then
     Exit;
-  Parts := SplitString(PathEnv, ';');
+  SplitStringToArray(PathEnv, ';', Parts);
   for I := 0 to GetArrayLength(Parts) - 1 do
   begin
     Candidate := AddBackslash(Trim(Parts[I])) + FileName;
@@ -377,46 +409,60 @@ var
 begin
   Result := False;
   if FindOnPath('gswin64c.exe') <> '' then
-    Result := True
-  else if FindOnPath('gswin32c.exe') <> '' then
-    Result := True
-  else
   begin
-    // Registry installs typically store values under version subkeys
-    if RegGetSubkeyNames(HKLM, 'SOFTWARE\\GPL Ghostscript', Subkeys) then
-    begin
-      for I := 0 to GetArrayLength(Subkeys) - 1 do
-      begin
-        if RegQueryStringValue(HKLM, 'SOFTWARE\\GPL Ghostscript\\' + Subkeys[I], 'GS_DLL', GsDll) then
-        begin
-          if FileExists(GsDll) then
-          begin
-            Result := True;
-            Exit;
-          end;
-        end;
-      end;
-    end;
+    Result := True;
+    Exit;
+  end;
 
-    if RegGetSubkeyNames(HKLM, 'SOFTWARE\\WOW6432Node\\GPL Ghostscript', Subkeys) then
+  if FindOnPath('gswin32c.exe') <> '' then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  // Common install locations (best-effort)
+  if FileExists(ExpandConstant('{autopf}\\gs\\gs10.05.1\\bin\\gswin64c.exe')) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  if FileExists(ExpandConstant('{autopf}\\gs\\gs10.05.1\\bin\\gswin32c.exe')) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  // Registry installs typically store values under version subkeys
+  if RegGetSubkeyNames(HKLM, 'SOFTWARE\\GPL Ghostscript', Subkeys) then
+  begin
+    for I := 0 to GetArrayLength(Subkeys) - 1 do
     begin
-      for I := 0 to GetArrayLength(Subkeys) - 1 do
+      if RegQueryStringValue(HKLM, 'SOFTWARE\\GPL Ghostscript\\' + Subkeys[I], 'GS_DLL', GsDll) then
       begin
-        if RegQueryStringValue(HKLM, 'SOFTWARE\\WOW6432Node\\GPL Ghostscript\\' + Subkeys[I], 'GS_DLL', GsDll) then
+        if FileExists(GsDll) then
         begin
-          if FileExists(GsDll) then
-          begin
-            Result := True;
-            Exit;
-          end;
+          Result := True;
+          Exit;
         end;
       end;
     end;
   end;
-  else if FileExists(ExpandConstant('{autopf}\\gs\\gs10.05.1\\bin\\gswin64c.exe')) then
-    Result := True
-  else if FileExists(ExpandConstant('{autopf}\\gs\\gs10.05.1\\bin\\gswin32c.exe')) then
-    Result := True;
+
+  if RegGetSubkeyNames(HKLM, 'SOFTWARE\\WOW6432Node\\GPL Ghostscript', Subkeys) then
+  begin
+    for I := 0 to GetArrayLength(Subkeys) - 1 do
+    begin
+      if RegQueryStringValue(HKLM, 'SOFTWARE\\WOW6432Node\\GPL Ghostscript\\' + Subkeys[I], 'GS_DLL', GsDll) then
+      begin
+        if FileExists(GsDll) then
+        begin
+          Result := True;
+          Exit;
+        end;
+      end;
+    end;
+  end;
 end;
 
 function EnsureGhostscriptInstalled(): Boolean;
