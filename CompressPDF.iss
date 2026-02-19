@@ -79,7 +79,7 @@ end;
 
 procedure RefreshLogMemo();
 var
-  S: String;
+  S: AnsiString;
 begin
   if (LogMemo = nil) or (LogFilePath = '') then
     Exit;

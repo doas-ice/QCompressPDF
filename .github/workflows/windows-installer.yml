@@ -43,6 +43,14 @@ jobs:
           (Get-Content compress_qt.py) -replace 'CURRENT_VERSION\s*=\s*".*"', "CURRENT_VERSION = `"$ver`"" | Set-Content -Encoding utf8 compress_qt.py
         shell: pwsh
 
+      - name: Update AppVersion in CompressPDF.iss from Git tag
+        run: |
+          $tag = "${{ github.ref }}" -replace '^refs/tags/',''
+          $ver = $tag -replace '^v',''
+          Write-Host "Setting AppVersion to $ver"
+          (Get-Content CompressPDF.iss) -replace '^AppVersion=.*$', "AppVersion=$ver" | Set-Content -Encoding utf8 CompressPDF.iss
+        shell: pwsh
+
       - name: Build Windows Installer with iscc
         run: |
           iscc CompressPDF.iss
