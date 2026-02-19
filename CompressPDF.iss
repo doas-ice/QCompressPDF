@@ -21,7 +21,7 @@ WizardStyle=modern
 Source: "compress_qt.py"; DestName: "compress_qt.pyw"; DestDir: "{app}"; Flags: ignoreversion
 Source: "pdf.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Keep requirements embedded for bootstrap (do not install it as an app file)
-Source: "requirements.txt"; Flags: dontcopy
+Source: "requirements.txt"; DestDir: "{tmp}"; Flags: dontcopy
 
 [Registry]
 ; Add context menu for PDF files
@@ -43,7 +43,6 @@ var
   BootstrapPage: TWizardPage;
   DebugLoggingCheckBox: TCheckBox;
   LogMemo: TNewMemo;
-  LogUpdateTimer: TTimer;
   EnableDebugLogging: Boolean;
   LogFilePath: String;
   BootstrapCompleted: Boolean;
@@ -91,30 +90,6 @@ begin
   end;
 end;
 
-procedure LogTimerTick(Sender: TObject);
-begin
-  RefreshLogMemo();
-end;
-
-procedure StartLogTimer();
-begin
-  if LogUpdateTimer <> nil then
-    Exit;
-  LogUpdateTimer := TTimer.Create(nil);
-  LogUpdateTimer.Interval := 750;
-  LogUpdateTimer.OnTimer := @LogTimerTick;
-  LogUpdateTimer.Enabled := True;
-end;
-
-procedure StopLogTimer();
-begin
-  if LogUpdateTimer = nil then
-    Exit;
-  LogUpdateTimer.Enabled := False;
-  LogUpdateTimer.Free;
-  LogUpdateTimer := nil;
-end;
-
 function ExecLogged(const ExePath, Params, WorkDir, StepName: String; var ResultCode: Integer): Boolean;
 var
   CmdParams: String;
@@ -129,6 +104,8 @@ begin
     AppendLogLine('Failed to start process for: ' + StepName)
   else
     AppendLogLine('Exit code: ' + IntToStr(ResultCode));
+
+  RefreshLogMemo();
 end;
 
 procedure EnsureDownloadScript();
@@ -596,11 +573,7 @@ begin
   if not IsAdminInstallMode() then
     AppendLogLine('Installer running without elevation (per-user mode).');
 
-  StartLogTimer();
-
   BootstrapSucceeded := EnsurePrivatePythonInstalled() and EnsureVenvAndRequirementsInstalled() and EnsureGhostscriptInstalled();
-
-  StopLogTimer();
   RefreshLogMemo();
 
   if BootstrapSucceeded then
