@@ -1,0 +1,19 @@
+The Windows distribution includes:
+
+CPython: Python Software Foundation License, https://www.python.org/psf/license/
+PySide6 / Qt: LGPLv3 (and applicable Qt component licenses), https://www.qt.io/licensing/
+PyPDF2: BSD-3-Clause, https://github.com/py-pdf/pypdf/tree/3.0.1
+Ghostscript 10.08.0: GNU AGPLv3, https://www.ghostscript.com/licensing/
+
+Ghostscript is distributed unmodified as a separate executable. Its license,
+notices and resources are retained in the ghostscript directory. Corresponding
+source and build instructions are available without charge at:
+https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/tag/gs10080
+
+PySide6/Qt source for the bundled version is available at:
+https://download.qt.io/official_releases/QtForPython/
+
+QCompressPDF source (MIT) and the exact packaging recipe are available at:
+https://github.com/doas-ice/QCompressPDF
+
+The bundled runtime does not register itself as the user's Python installation.
