@@ -9,9 +9,18 @@ Assert-Native 'PyInstaller'
 $gsInstaller = "$env:RUNNER_TEMP\qcompresspdf-gs.exe"
 Download-Checked 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10080/gs10080w64.exe' $gsInstaller '52a91b8bf09298788d7a57b9206127026c23eacd75405f0a131e26dc381dce50'
 $gsDir = "$env:RUNNER_TEMP\qcompresspdf-gs"
-$process = Start-Process $gsInstaller -ArgumentList '/S',"/D=$gsDir" -PassThru
-if (!$process.WaitForExit(120000)) { $process.Kill(); throw 'Ghostscript setup timed out' }
-if ($process.ExitCode -ne 0) { throw 'Ghostscript setup failed' }
+# NSIS silent setup can launch an interactive VC redistributable. Extract only
+# the runtime/resources instead: CI and end users need no nested installation.
+7z x -y "-o$gsDir" $gsInstaller bin doc lib Resource iccprofiles
+Assert-Native 'Ghostscript extraction'
+# Ship app-local MSVC runtime DLLs so a clean Windows machine does not need the
+# global Visual C++ redistributable either. Use the runner's licensed VS redist.
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$vsRoot = & $vswhere -latest -products '*' -property installationPath
+$crt = Get-ChildItem "$vsRoot\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+if (!$crt) { throw 'MSVC redistributable directory was not found' }
+Copy-Item "$($crt.FullName)\*.dll" "$gsDir\bin" -Force
+Copy-Item "$($crt.FullName)\*.dll" dist\QCompressPDF\_internal -Force
 & "$gsDir\bin\gswin64c.exe" --version
 Assert-Native 'Ghostscript'
 Copy-Item $gsDir dist\QCompressPDF\ghostscript -Recurse

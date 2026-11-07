@@ -3,6 +3,9 @@ The Windows distribution includes:
 CPython: Python Software Foundation License, https://www.python.org/psf/license/
 PySide6 / Qt: LGPLv3 (and applicable Qt component licenses), https://www.qt.io/licensing/
 PyPDF2: BSD-3-Clause, https://github.com/py-pdf/pypdf/tree/3.0.1
+Microsoft Visual C++ Runtime: Microsoft redistributable license; app-local DLLs
+from the Visual Studio redistributable directory.
+https://visualstudio.microsoft.com/license-terms/
 Ghostscript 10.08.0: GNU AGPLv3, https://www.ghostscript.com/licensing/
 
 Ghostscript is distributed unmodified as a separate executable. Its license,
