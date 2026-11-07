@@ -26,9 +26,10 @@ RestartApplications=no
 
 [Files]
 Source: "scripts\validate_payload.ps1"; Flags: dontcopy
-Source: "dist\QCompressPDF\*"; Excludes: "QCompressPDF.exe"; DestDir: "{app}\versions\{#PayloadVersion}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; Validate the complete payload before Inno writes shortcuts or registry entries.
-Source: "dist\QCompressPDF\QCompressPDF.exe"; DestDir: "{app}\versions\{#PayloadVersion}"; Flags: ignoreversion; AfterInstall: ValidatePayload
+; Stage and validate before touching an installed release. The validated stage
+; is then copied as external files, without embedding the payload twice.
+Source: "dist\QCompressPDF\*"; DestDir: "{tmp}\payload"; Flags: dontcopy recursesubdirs createallsubdirs
+Source: "{tmp}\payload\*"; DestDir: "{app}\versions\{#PayloadVersion}"; Flags: external ignoreversion recursesubdirs createallsubdirs
 
 [Registry]
 ; The old uninstall log owns CompressPDF. It must never own these new entries.
@@ -73,6 +74,22 @@ begin
     Result := InsideDirectory(Target, LegacyDir);
 end;
 
+function ValidateStagedPayload(): Boolean;
+var
+  Code: Integer;
+  Exe, Params: String;
+begin
+  ExtractTemporaryFiles('{tmp}\payload\*');
+  ExtractTemporaryFile('validate_payload.ps1');
+  Exe := ExpandConstant('{tmp}\payload\QCompressPDF.exe');
+  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+    AddQuotes(ExpandConstant('{tmp}\validate_payload.ps1')) + ' -Executable ' + AddQuotes(Exe);
+  Log('Validating staged Python, Qt and Ghostscript before changing the installation.');
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Result := Result and (Code = 0);
+  Log('Payload validation result: ' + IntToStr(Code));
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Candidate, Parent: String;
@@ -98,22 +115,12 @@ begin
     if CompareText(Parent, Candidate) = 0 then Break;
     Candidate := Parent;
   end;
-end;
-
-procedure ValidatePayload();
-var
-  Code: Integer;
-  Exe, Params: String;
-begin
-  Exe := ExpandConstant('{app}\versions\{#PayloadVersion}\QCompressPDF.exe');
-  Log('Validating bundled Python, Qt and Ghostscript before activating this release.');
-  ExtractTemporaryFile('validate_payload.ps1');
-  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
-    AddQuotes(ExpandConstant('{tmp}\validate_payload.ps1')) + ' -Executable ' + AddQuotes(Exe);
-  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, Code) then
-    RaiseException('The bundled application could not start. Installation has not activated the new release.');
-  if Code <> 0 then
-    RaiseException('The bundled application failed its self-test. Installation has not activated the new release.');
+  try
+    if not ValidateStagedPayload() then
+      Result := 'The bundled application failed its self-test. The existing installation has not been changed. Download the installer again or check your security software.';
+  except
+    Result := 'Could not validate the bundled application. The existing installation has not been changed. ' + GetExceptionMessage;
+  end;
 end;
 
 function LegacyUninstaller(Root: Integer): String;

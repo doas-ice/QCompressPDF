@@ -6,6 +6,8 @@ function Check([bool]$Condition, [string]$Message) {
     Write-Host "PASS: $Message"
 }
 function Run-Installer([string]$Exe, [string[]]$Arguments, [bool]$ShouldPass = $true) {
+    $log = "$env:RUNNER_TEMP\qcompresspdf-$([guid]::NewGuid().ToString()).log"
+    $Arguments += "/LOG=`"$log`""
     $process = Start-Process -FilePath $Exe -ArgumentList $Arguments -PassThru
     if (!$process.WaitForExit(120000)) { $process.Kill(); throw "Timed out: $Exe" }
     if ($ShouldPass) { Check ($process.ExitCode -eq 0) "Installer succeeded: $Exe" }
