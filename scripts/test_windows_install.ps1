@@ -85,6 +85,15 @@ try {
     foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
 }
 
+# A missing bundled Ghostscript must not be masked by the working system one.
+$bundledGs = "$target\versions\$env:QCOMPRESSPDF_VERSION\ghostscript\bin\gswin64c.exe"
+Move-Item $bundledGs "$bundledGs.disabled"
+try {
+    $missing = Start-Process -FilePath $exe -ArgumentList '--self-test' -PassThru
+    if (!$missing.WaitForExit(30000)) { $missing.Kill(); throw 'Missing-runtime check hung' }
+    Check ($missing.ExitCode -ne 0) 'Missing bundled Ghostscript is rejected despite system Ghostscript'
+} finally { Move-Item "$bundledGs.disabled" $bundledGs }
+
 # AppMutex rejects a silent update instead of terminating an active compression.
 $running = Start-Process -FilePath $exe -PassThru
 try {

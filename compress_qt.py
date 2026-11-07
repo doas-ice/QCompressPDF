@@ -51,8 +51,8 @@ PRESETS_DPI = {
 def get_gs_executable():
     if getattr(sys, "frozen", False):
         bundled = Path(sys.executable).parent / "ghostscript" / "bin" / "gswin64c.exe"
-        if bundled.is_file():
-            return str(bundled)
+        # A frozen release must never silently fall back to another installation.
+        return str(bundled)
 
     def _find_on_path(names: list[str]) -> str | None:
         path_env = os.environ.get("PATH", "")
@@ -1217,6 +1217,11 @@ def self_test():
 
 if __name__ == "__main__":
     if '--self-test' in sys.argv:
-        self_test()
+        try:
+            self_test()
+        except Exception as error:
+            if sys.stderr is not None:
+                print(f'Self-test failed: {error}', file=sys.stderr)
+            sys.exit(1)
     else:
         main()

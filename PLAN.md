@@ -33,7 +33,7 @@
 
 Implemented all six steps in the sequence above.
 
-- Windows: removed runtime bootstrap entirely; CI builds an onedir frozen app with bundled Ghostscript. Inno installs versioned payloads and points per-user shortcuts/context menus to the installed version. No system Python discovery, Python registration, pip downloads, or elevation at install time. Legacy environments remain untouched. Added build, payload, clean-install and reinstall gates; these have **not been executed on this Linux host**.
+- Windows: removed runtime bootstrap entirely; CI builds an onedir frozen app with bundled Ghostscript. Inno installs versioned payloads and points per-user shortcuts/context menus to the installed version. No system Python discovery, Python registration, pip downloads, or elevation at install time. Legacy environments remain untouched. The Windows build and migration gates have now run successfully on GitHub Windows Server 2022/2025 runners; see the release hardening record below.
 - Linux: fresh release/venv at its final path (so venv shebangs remain valid), binary-only pinned dependencies, bounded downloads, smoke test before activation, installation lock, atomic current-link replacement, rollback on commit failure/interruption. Honors XDG_DATA_HOME, resolves local source beside the installer, and quotes the KDE launcher. Previous releases remain available for rollback; disk usage grows until uninstall/manual retirement of old releases.
 - Startup: daemon network check with GUI-thread result polling and numeric version comparison. Update action opens the releases page; it no longer runs a blocking installer while the app is open.
 - Output: portable Unicode-preserving filename sanitization, reserved-name/length handling, fixed PDF extension, chosen split directory, original-file protection, overwrite confirmation and atomic per-file replacement. All split destinations are chosen and all parts validated before publishing. Multi-file publication is not globally atomic; errors report any parts already saved.
@@ -45,11 +45,11 @@ Implemented all six steps in the sequence above.
 - 24 unittest cases cover actual Ghostscript vector-over-raster compression/text preservation, missing-page rejection, changing/incomplete inputs, shared-resource splitting, uneven byte/page balancing, cancellation, filenames, asynchronous update responsiveness, estimates/timeouts, and Linux install/update/failure/interruption/uninstall transactions.
 - Linux installer transaction tests execute the real shell script with dependency installation and smoke-test executables replaced by deterministic fixtures. They do not claim an end-to-end network install or visual Dolphin validation.
 - Real offscreen Qt/Ghostscript `--self-test`, Python compile checks, Bash syntax validation, and `git diff --check` pass.
-- Local environment: Python 3.14, PySide6 6.12, PyPDF2 3.0.1, Ghostscript 10.08. Windows bundle pins Ghostscript 10.05.1 from the original installer source.
+- Local environment: Python 3.14, PySide6 6.12, PyPDF2 3.0.1, Ghostscript 10.08. Windows bundle now pins Ghostscript 10.08.0, verifies the upstream SHA-256, and includes app-local MSVC runtime DLLs.
 
 ### Remaining external confirmation
 
-- Run the Windows CI gates, then validate upgrading an actual legacy installation on Windows 10/11 (including multiple preinstalled Python versions). No Windows executable was built locally.
+- Validate desktop-specific behavior on actual Windows 10/11 machines as additional field coverage. Automated Windows Server 2022/2025 build and legacy migration checks have passed; they are not exhaustive desktop certification.
 - Confirm the Dolphin context menu visually on the user's Arch/KDE session.
 - Test a representative failing PowerPoint export. Synthetic vector-text-over-raster PDFs pass; no claim is made that every document-specific exporter issue is reproduced or resolved.
 - Stability checks detect observed writing and later source changes, but cannot guarantee that an exporter will never resume after a long pause. Size estimates and byte/page balance are deliberately approximate.
@@ -64,3 +64,16 @@ Added background observation from file selection through settings/compression/pr
 Added regression coverage for an unlocked writer paused longer than the snapshot quiet interval, page-count changes without size changes, temporary sync-file disappearance, no repeated reads of unchanged PDFs, nonmodal warning deduplication, and slow-IO startup/shutdown responsiveness. This detects observed changes; it cannot predict future writes after observation has ended or identify the exporter's intended final page count.
 
 Follow-up validation: all 30 regression tests pass (including six new monitor tests); Python compilation and `git diff --check` pass. No Windows/OneDrive live environment was available for this follow-up.
+
+
+### v1.6.0 release hardening
+
+- New `QCompressPDF.Bundled` installer identity, `%LOCALAPPDATA%\Programs\QCompressPDF` default path, independent context-menu key and shortcut. Old recursive uninstall logs cannot own the new payload. Legacy roots and their descendants are rejected as installation targets.
+- The runtime is extracted to a temporary stage and validated with a bounded self-test **before** installed files or activation entries change. A failure-injection test exposed that exceptions in an AfterInstall callback could be ignored by silent setup; this was replaced with PrepareToInstall returning an explicit failure.
+- An application mutex blocks reinstall/update while the new app is running, without terminating compression.
+- Interactive successful setup offers to open the registered legacy uninstaller. No is the default; the old directory and recursive-deletion warning are shown. Silent setup never removes legacy installations. Administrator legacy removal uses the normal elevation prompt.
+- Ghostscript's nested installer hung on both CI runners. Packaging now directly extracts the verified upstream runtime and resources and bundles its app-local C++ runtime DLLs. Neither packaging nor end-user installation needs nested Ghostscript/VC setup. The corresponding Ghostscript source is shipped as a release asset.
+- Runtime startup clears conflicting Python/Qt/Ghostscript variables. Frozen builds always use bundled Ghostscript; missing bundled files cannot be masked by a system installation.
+- Release validation run https://github.com/doas-ice/QCompressPDF/actions/runs/42371116470 passed Linux and both Windows gates. Tests use the exact published v1.5.5 installer with working dependencies pre-provisioned, then exercise per-user/admin migration, legacy uninstall, unsafe target rejection, environmental interference, running-app protection, invalid-payload rejection, reinstall and new uninstall.
+- Local regression suite now contains 33 tests. The final tag workflow reruns all gates, including the missing-bundled-Ghostscript check, and creates only a **draft** release. Publication occurs only after inspecting its results and assets.
+- Remaining limits: unsigned installer/SmartScreen reputation; desktop-specific Windows 10/11 behavior; enterprise security policies; filesystem/hardware failures; existing Linux venv dependence on system Python. No universal “foolproof” guarantee is claimed.

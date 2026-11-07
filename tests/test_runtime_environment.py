@@ -21,3 +21,10 @@ class RuntimeEnvironmentTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), patch('sys.argv', ['app', '--self-test']):
             clean_environment()
             self.assertEqual(os.environ['QT_QPA_PLATFORM'], 'offscreen')
+
+    def test_frozen_app_does_not_fall_back_to_system_ghostscript(self):
+        import compress_qt
+        from pathlib import Path
+        with patch('sys.frozen', True, create=True), patch('sys.executable', '/missing/app/QCompressPDF.exe'):
+            self.assertEqual(compress_qt.get_gs_executable(),
+                             str(Path('/missing/app/ghostscript/bin/gswin64c.exe')))

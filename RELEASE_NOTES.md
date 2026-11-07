@@ -24,6 +24,6 @@ The KDE installer stages and tests a fresh virtual environment before switching 
 
 ### Verification and distribution
 
-Release gates include Linux regression tests and Windows Server 2022/2025 installer tests using the published v1.5.5 installer with pre-provisioned dependencies, per-user/admin legacy migration, old-version removal, conflicting runtime environment variables, running-app protection, failed-payload validation and reinstall/uninstall. Hosted Windows Server checks are not a claim of testing every Windows 10/11 desktop configuration.
+Release gates include Linux regression tests and Windows Server 2022/2025 installer tests using the published v1.5.5 installer with pre-provisioned dependencies, per-user/admin legacy migration, old-version removal, conflicting runtime environment variables, running-app protection, failed-payload validation, missing-bundled-runtime rejection and reinstall/uninstall. Hosted Windows Server checks are not a claim of testing every Windows 10/11 desktop configuration.
 
 The installer is unsigned; Windows SmartScreen may identify it as an unrecognized application. SHA-256 checksums accompany the assets. Ghostscript 10.08.0 is bundled unmodified; its corresponding source archive is included as a release asset. Other third-party notices and source links are included in the installation.
