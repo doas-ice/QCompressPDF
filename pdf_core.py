@@ -85,7 +85,32 @@ def _filename_fits(path):
     except OSError as error:
         if error.errno == errno.ENAMETOOLONG or getattr(error, 'winerror', None) == 206:
             return False
+        if getattr(error, 'winerror', None) == 123 and _windows_component_too_long(path):
+            return False
         raise
+
+
+def _windows_component_too_long(path):
+    # NTFS can report ERROR_INVALID_NAME for an overlong component. Ask the
+    # destination volume for its limit; do not guess from this ambiguous error.
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    volume_path = ctypes.create_unicode_buffer(32768)
+    get_path = kernel.GetVolumePathNameW
+    get_path.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    get_path.restype = wintypes.BOOL
+    if not get_path(str(Path(path).parent), volume_path, len(volume_path)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    get_info = kernel.GetVolumeInformationW
+    get_info.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD,
+                        ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+                        ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR, wintypes.DWORD]
+    get_info.restype = wintypes.BOOL
+    limit = wintypes.DWORD()
+    if not get_info(volume_path.value, None, 0, None, ctypes.byref(limit), None, None, 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return len(Path(path).name.encode('utf-16-le')) // 2 > limit.value
 
 
 def _graphemes(text):

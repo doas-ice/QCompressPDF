@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import PyPDF2
-from pdf_core import prepare_output_path, atomic_copy, _graphemes, _probe_filename
+from pdf_core import prepare_output_path, atomic_copy, _graphemes, _probe_filename, _filename_fits
 from test_pdf_core import pdf_bytes
 
 
@@ -92,6 +92,17 @@ class OutputNameTests(unittest.TestCase):
         self.assertTrue(result.endswith('-end_part2.pdf'))
         with patch('pdf_core._probe_filename'):
             self.assertEqual(Path(prepare_output_path(self.root, stem)).stem, stem)
+
+    def test_windows_invalid_name_requires_volume_length_confirmation(self):
+        error = OSError(errno.EINVAL, 'invalid name')
+        error.winerror = 123
+        with patch('pdf_core._probe_filename', side_effect=error):
+            with patch('pdf_core._windows_component_too_long', return_value=True):
+                self.assertFalse(_filename_fits('long.pdf'))
+            with patch('pdf_core._windows_component_too_long', return_value=False):
+                with self.assertRaises(OSError) as caught:
+                    _filename_fits('invalid.pdf')
+                self.assertIs(caught.exception, error)
 
     def test_unshortenable_directory_reports_an_error(self):
         with patch('pdf_core._probe_filename', side_effect=OSError(errno.ENAMETOOLONG, 'path too long')):
