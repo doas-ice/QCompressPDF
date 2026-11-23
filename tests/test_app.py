@@ -26,6 +26,10 @@ class AppTests(unittest.TestCase):
         cls.qt.setQuitOnLastWindowClosed(False)
 
     def setUp(self):
+        # Unexpected modal errors must fail CI instead of waiting for a click.
+        critical = patch.object(QMessageBox, 'critical', side_effect=lambda *args: self.fail(str(args[-1])))
+        critical.start()
+        self.addCleanup(critical.stop)
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
         self.source = Path(self.folder.name)/'source.pdf'

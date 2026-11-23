@@ -49,6 +49,7 @@ jobs:
         shell: pwsh
         run: ./scripts/build_windows.ps1
       - name: Regression tests
+        timeout-minutes: 5
         run: python -m unittest discover -s tests -v
         env:
           QT_QPA_PLATFORM: offscreen
