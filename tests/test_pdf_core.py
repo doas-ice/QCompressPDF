@@ -49,7 +49,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(safe_stem('CON'), '_CON')
         self.assertEqual(safe_stem('LPT1.notes'), '_LPT1.notes')
         self.assertEqual(safe_stem('বাংলা'), 'বাংলা')
-        self.assertLessEqual(len(safe_stem('😀' * 1000).encode()), 180)
+        self.assertEqual(safe_stem('😀' * 1000), '😀' * 1000)
         self.assertEqual(safe_stem('...'), '')
 
     def test_output_directory_and_suffix(self):
@@ -57,7 +57,7 @@ class CoreTests(unittest.TestCase):
             path = output_path(folder, 'a' * 400, '_part100')
             self.assertEqual(Path(path).parent, Path(folder))
             self.assertTrue(path.endswith('_part100.pdf'))
-            self.assertLess(len(Path(path).name.encode()), 255)
+            self.assertEqual(Path(path).name, 'a' * 400 + '_part100.pdf')
             with self.assertRaises(ValueError):
                 output_path(folder, '')
             with self.assertRaises(ValueError):

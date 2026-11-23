@@ -9,7 +9,8 @@ import shlex
 import shutil
 import queue
 import threading
-from pdf_core import (version_tuple, safe_stem, output_path, signature, assert_unchanged,
+import time
+from pdf_core import (version_tuple, safe_stem, output_path, prepare_output_path, estimate_page_indices, signature, assert_unchanged,
                       stable_snapshot, atomic_copy, gs_command, plan_split, write_range, watch_source_changes)
 from PySide6.QtWidgets import (
     QApplication,
@@ -173,7 +174,7 @@ def get_pdf_page_count(pdf_path):
         return 0
 
 
-CURRENT_VERSION = "1.6.0"
+CURRENT_VERSION = "1.6.1"
 
 GITHUB_REPO = "doas-ice/QCompressPDF"
 
@@ -450,28 +451,54 @@ class CompressThread(QThread):
 def estimate_size(source, dpi, key, results):
     try:
         with tempfile.TemporaryDirectory(prefix="qcompress-estimate-") as folder:
-            sample = os.path.join(folder, "sample.pdf")
-            output = os.path.join(folder, "output.pdf")
+            deadline = time.monotonic() + 30
             with open(source, 'rb') as stream:
                 reader = PyPDF2.PdfReader(stream)
                 count = len(reader.pages)
-                if not count:
-                    raise ValueError("No pages")
-                writer = PyPDF2.PdfWriter()
-                indices = sorted({0, count // 2, count - 1})
-                for index in indices:
-                    writer.add_page(reader.pages[index])
-                with open(sample, 'wb') as out:
-                    writer.write(out)
+                indices = estimate_page_indices(count)
+                samples = [('sample', indices)]
+                if len(indices) < count:
+                    # Nested, spread-out sample measures how much extra output
+                    # the larger sample adds, separating shared resources from
+                    # per-page growth. Scaling raw sample bytes double-counts
+                    # shared fonts/images and can skew slide-deck estimates.
+                    smaller = indices[::2]
+                    smaller[-1] = indices[-1]
+                    samples.append(('baseline', smaller))
+                for label, pages in samples:
+                    path = os.path.join(folder, label + '.pdf')
+                    if len(pages) == count:
+                        shutil.copyfile(source, path)
+                    else:
+                        writer = PyPDF2.PdfWriter()
+                        for index in pages:
+                            writer.add_page(reader.pages[index])
+                        with open(path, 'wb') as out:
+                            writer.write(out)
             assert_unchanged(source, key[1])
+            sizes = []
             kwargs = {'creationflags': subprocess.CREATE_NO_WINDOW} if sys.platform == 'win32' else {}
-            subprocess.run(gs_command(GS_EXECUTABLE, sample, output, dpi),
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           check=True, timeout=15, **kwargs)
+            for label, pages in samples:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(GS_EXECUTABLE, 30)
+                path = os.path.join(folder, label + '.pdf')
+                output = os.path.join(folder, label + '-compressed.pdf')
+                subprocess.run(gs_command(GS_EXECUTABLE, path, output, dpi),
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               check=True, timeout=remaining, **kwargs)
+                if get_pdf_page_count(output) != len(pages):
+                    raise ValueError("Estimate did not preserve sampled pages")
+                sizes.append(os.path.getsize(output))
             assert_unchanged(source, key[1])
-            ratio = min(1, os.path.getsize(output) / max(os.path.getsize(sample), 1))
-            estimated = os.path.getsize(source) * ratio / 1024 / 1024
-            message = f"Estimated size: ≈ {estimated:.2f} MB (sample-based; actual size may vary)."
+            projected = sizes[0]
+            if len(samples) == 2:
+                growth = max(0, sizes[0] - sizes[1]) / (len(indices) - len(samples[1][1]))
+                projected += growth * (count - len(indices))
+            estimated = min(os.path.getsize(source), projected) / 1024 / 1024
+            coverage = (f"all {count} pages measured" if len(indices) == count
+                        else f"sample-based: {len(indices)} of {count} pages; actual size may vary")
+            message = f"Estimated size: ≈ {estimated:.2f} MB ({coverage})."
     except Exception:
         message = "Estimated size unavailable; you can still compress and inspect the actual size."
     results.put((key, message))
@@ -891,7 +918,7 @@ class PreviewDialog(QDialog):
                 # conflict dialog cannot leave half of the requested split.
                 targets = []
                 for part_num in range(1, len(best_split) + 1):
-                    target = output_path(self.directory_edit.text(), self.filename_edit.text(), f"_part{part_num}")
+                    target = prepare_output_path(self.directory_edit.text(), self.filename_edit.text(), f"_part{part_num}")
                     while os.path.exists(target):
                         answer = QMessageBox.question(
                             self, "File Exists", f"The file '{target}' already exists. Overwrite?",
@@ -904,7 +931,7 @@ class PreviewDialog(QDialog):
                             self, "Save Split PDF As", target, "PDF files (*.pdf)")
                         if not selected or not replacement:
                             return
-                        target = output_path(os.path.dirname(replacement), Path(replacement).stem)
+                        target = prepare_output_path(os.path.dirname(replacement), Path(replacement).stem)
                     canonical = os.path.normcase(os.path.realpath(target))
                     if canonical == os.path.normcase(os.path.realpath(self.original)):
                         raise ValueError("Choose a split output other than the original PDF.")
@@ -1007,7 +1034,11 @@ class PreviewDialog(QDialog):
     def accept_dialog(self):
         if not self.validate_name():
             return
-        self.output_file = output_path(self.directory_edit.text(), self.filename_edit.text())
+        try:
+            self.output_file = prepare_output_path(self.directory_edit.text(), self.filename_edit.text())
+        except (OSError, ValueError) as error:
+            QMessageBox.critical(self, "Output Filename", str(error))
+            return
         self.accepted_result = True
         self.accept()
 
@@ -1122,7 +1153,11 @@ def main():
                             "PDF files (*.pdf)",
                         )
                         if ok and new_file:
-                            final_output_file = output_path(os.path.dirname(new_file), Path(new_file).stem)
+                            try:
+                                final_output_file = prepare_output_path(os.path.dirname(new_file), Path(new_file).stem)
+                            except (OSError, ValueError) as error:
+                                QMessageBox.critical(None, "Output Filename", str(error))
+                                continue
                         else:
                             continue
                     else:

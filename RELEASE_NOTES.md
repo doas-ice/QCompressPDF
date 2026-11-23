@@ -1,29 +1,21 @@
-QCompressPDF 1.6.0 improves installer isolation, upgrade safety and PDF integrity.
+QCompressPDF 1.6.1 improves compressed-size estimates and long Unicode filenames.
 
-### Updating from older Windows releases
+### More representative estimates
 
-Run `QCompressPDF.exe` normally. The new app installs per user in `%LOCALAPPDATA%\Programs\QCompressPDF`, separate from the old `Compress PDF` installation. Python, Qt and Ghostscript are bundled; no dependency download or administrator access is needed for the new installation. Existing Python installations are not changed.
+- PDFs with up to 24 pages are measured in full.
+- Larger PDFs sample pages evenly across the whole document. Coverage grows with page count, up to 64 pages: for example, 24 of 100, 40 of 400, and 64 of 1000.
+- Two nested samples estimate shared font/image overhead separately from per-page growth.
+- The estimate shows its page coverage, runs in the background, and uses a 30-second Ghostscript budget. Preview still shows the actual size; unusual page distributions can still make a sample estimate inaccurate.
 
-After successful validation, interactive setup offers to open the old uninstaller. Keeping the old version is the default. **The legacy uninstaller may remove everything in its old directory: move any personal files out before agreeing.** The new runtime, shortcut and context menu use separate locations and remain installed when the legacy version is removed. Removing an administrator-installed legacy version may require administrator approval. Silent installation never removes the legacy version automatically.
+### Preserve full filenames when possible
 
-Setup refuses legacy directories and requires the new app to be closed before a reinstall/update. A failed bundled-runtime validation does not activate the new shortcuts or context command.
+- Removed the unconditional filename byte cap and conservative Windows path cutoff. Names are no longer truncated while typing.
+- Saving/splitting tries the full name on the destination filesystem using an exclusive creation probe, immediately removed. Existing files are not modified by these probes.
+- Only a filename-length error triggers shortening. The app keeps both ends with a middle ellipsis and preserves Bangla conjuncts, combining marks, emoji, the PDF extension, and generated split suffixes.
+- Permission, disk-full and I/O errors are reported rather than disguised as filename problems. Overwrite confirmation applies to the final resolved name; PDF saves remain atomic.
 
-### PDF workflow
+### Updating
 
-- Startup update checks run in the background.
-- DPI selection shows a sample-based size estimate; preview shows the actual output size.
-- Output filenames are cleaned and bounded; saves use atomic per-file replacement.
-- Split limits use actual serialized PDF sizes. Numbered splitting balances both bytes and page counts while preserving page order.
-- Compression validates page counts and retains the original bytes if recompression would enlarge the file.
-- A nonmodal warning reports source size/page-count changes during exporting, copying or syncing. No new user inputs are required. This detects observed changes; it cannot prove an exporter or sync client will never resume later.
-- Completion displays total pages.
+Close QCompressPDF and run `QCompressPDF.exe`. Windows installation remains offline and per-user with bundled Python, Qt, Ghostscript and C++ runtime DLLs. Existing Python installations are not modified. Users migrating from legacy versions are offered optional legacy removal only after successful installation; keeping the old version is the default.
 
-### Linux
-
-The KDE installer stages and tests a fresh virtual environment before switching releases, preserves the previous release on failure, and limits dependency download time. It still requires compatible system Python and Ghostscript; it is not an independently bundled Linux runtime.
-
-### Verification and distribution
-
-Release gates include Linux regression tests and Windows Server 2022/2025 installer tests using the published v1.5.5 installer with pre-provisioned dependencies, per-user/admin legacy migration, old-version removal, conflicting runtime environment variables, running-app protection, failed-payload validation, missing-bundled-runtime rejection and reinstall/uninstall. Hosted Windows Server checks are not a claim of testing every Windows 10/11 desktop configuration.
-
-The installer is unsigned; Windows SmartScreen may identify it as an unrecognized application. SHA-256 checksums accompany the assets. Ghostscript 10.08.0 is bundled unmodified; its corresponding source archive is included as a release asset. Other third-party notices and source links are included in the installation.
+The installer is unsigned; Windows SmartScreen may show an unrecognized-app warning. SHA-256 checksums and the Windows migration test report accompany this release. The bundled Ghostscript 10.08.0 corresponding source archive is also included.

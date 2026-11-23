@@ -1,5 +1,7 @@
 """PDF and filesystem invariants shared by the UI and background workers."""
 import os
+import errno
+import math
 from pathlib import Path
 import re
 import shutil
@@ -22,11 +24,6 @@ def safe_stem(text, directory='', editing=False):
                                       *(f'COM{i}' for i in (*range(1, 10), '¹', '²', '³')),
                                       *(f'LPT{i}' for i in (*range(1, 10), '¹', '²', '³'))}:
         text = '_' + text
-    # Reserve enough for .pdf, split suffixes and destination temporary names.
-    budget = 180
-    if os.name == 'nt':
-        budget = min(budget, 235 - len(os.path.abspath(directory or '.')) - 20)
-    text = text.encode('utf-8')[:max(0, budget)].decode('utf-8', errors='ignore')
     return text if editing else text.rstrip('. ')
 
 
@@ -39,9 +36,87 @@ def output_path(directory, stem, suffix=''):
     if not clean:
         raise ValueError('Enter a filename; the directory path may also be too long.')
     path = directory / (clean + suffix + '.pdf')
-    if os.name == 'nt' and len(str(path).encode('utf-16-le')) // 2 >= 250:
-        raise ValueError('Output path is too long. Choose a shorter directory.')
     return str(path)
+
+
+def _probe_filename(path):
+    """Try the real filename without truncating or replacing anything existing."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # A valid existing name still needs the UI's normal overwrite confirmation.
+        if os.path.isdir(path):
+            raise IsADirectoryError(f'The output path is a directory: {path}')
+        return
+    try:
+        os.close(fd)
+    finally:
+        os.unlink(path)
+
+
+def _filename_fits(path):
+    try:
+        _probe_filename(path)
+        return True
+    except OSError as error:
+        if error.errno == errno.ENAMETOOLONG or getattr(error, 'winerror', None) == 206:
+            return False
+        raise
+
+
+def _graphemes(text):
+    # Qt is already installed. Its Unicode grapheme boundaries preserve Bangla
+    # conjuncts/marks and emoji sequences; boundary offsets are UTF-16 units.
+    from PySide6.QtCore import QTextBoundaryFinder
+    finder = QTextBoundaryFinder(QTextBoundaryFinder.Grapheme, text)
+    encoded = text.encode('utf-16-le')
+    start = 0
+    clusters = []
+    while (end := finder.toNextBoundary()) != -1:
+        clusters.append(encoded[start * 2:end * 2].decode('utf-16-le'))
+        start = end
+    return clusters
+
+
+def prepare_output_path(directory, stem, suffix=''):
+    """Keep the full name unless the actual destination rejects its length.
+
+    Probe only on save/split, never during typing. Keep both ends, the PDF
+    extension and split suffix. Every probe is exclusive and immediately removed.
+    """
+    full = output_path(directory, stem, suffix)
+    if _filename_fits(full):
+        return full
+    clusters = _graphemes(safe_stem(stem))
+
+    def candidate(retained):
+        left = (retained + 1) // 2
+        right = retained // 2
+        shortened = ''.join(clusters[:left]) + '…' + ''.join(clusters[-right:])
+        return output_path(directory, shortened, suffix)
+
+    # If even one complete cluster at each end cannot fit, shortening the
+    # directory/name is necessary; do not split a grapheme to force a save.
+    if len(clusters) < 3 or not _filename_fits(candidate(2)):
+        raise ValueError('The output path is too long. Choose a shorter directory or filename.')
+    low, high = 2, len(clusters) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _filename_fits(candidate(middle)):
+            low = middle
+        else:
+            high = middle - 1
+    return candidate(low)
+
+
+def estimate_page_indices(page_count):
+    """Whole small documents; bounded, evenly spread samples for larger ones."""
+    if page_count <= 0:
+        raise ValueError('The PDF has no pages.')
+    count = min(page_count, 64, max(24, math.ceil(2 * math.sqrt(page_count))))
+    if count == 1:
+        return [0]
+    return [round(i * (page_count - 1) / (count - 1)) for i in range(count)]
 
 
 def signature(path):

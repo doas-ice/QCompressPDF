@@ -53,6 +53,31 @@ class AppTests(unittest.TestCase):
         self.assertEqual(dialog.output_file, str(Path(self.folder.name)/'_CON.pdf'))
         dialog.close()
 
+    def test_long_bangla_name_is_not_clipped_while_typing(self):
+        dialog = app.PreviewDialog(str(self.source), str(self.output), 100, 85,
+                                   str(Path(self.folder.name)/'saved.pdf'))
+        stem = 'শুরু-' + 'বাংলাশ্রেণি' * 50 + '-শেষ'
+        dialog.filename_edit.setText(stem)
+        self.assertEqual(dialog.filename_edit.text(), stem)
+        self.assertTrue(dialog.accept_btn.isEnabled())
+        dialog.accept_dialog()
+        self.assertTrue(dialog.accepted_result)
+        self.assertIn('…', Path(dialog.output_file).stem)
+        self.assertTrue(Path(dialog.output_file).stem.startswith('শুরু-'))
+        self.assertTrue(Path(dialog.output_file).stem.endswith('-শেষ'))
+        self.assertFalse(Path(dialog.output_file).exists())
+        dialog.close()
+
+    def test_save_permission_error_keeps_preview_open(self):
+        dialog = app.PreviewDialog(str(self.source), str(self.output), 100, 85,
+                                   str(Path(self.folder.name)/'saved.pdf'))
+        with patch.object(app, 'prepare_output_path', side_effect=PermissionError('read-only folder')), \
+             patch.object(QMessageBox, 'critical') as warning:
+            dialog.accept_dialog()
+        self.assertFalse(dialog.accepted_result)
+        self.assertIn('read-only', warning.call_args.args[-1])
+        dialog.close()
+
     def test_slow_update_check_does_not_block_gui(self):
         finished = threading.Event()
         def slow():
@@ -120,7 +145,7 @@ class AppTests(unittest.TestCase):
         results = queue.Queue()
         key = (100, signature(self.source))
         app.estimate_size(str(self.source), 100, key, results)
-        self.assertIn('sample-based', results.get()[1])
+        self.assertIn('all 3 pages measured', results.get()[1])
         with patch.object(app.subprocess, 'run', side_effect=subprocess.TimeoutExpired('gs', 15)):
             app.estimate_size(str(self.source), 100, key, results)
         self.assertIn('unavailable', results.get()[1])
