@@ -42,27 +42,40 @@ def output_path(directory, stem, suffix=''):
 def _probe_filename(path):
     """Try the real filename without truncating or replacing anything existing."""
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        if os.name == 'nt':
+            _windows_create_probe(path)
+            fd = None
+        else:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         # A valid existing name still needs the UI's normal overwrite confirmation.
         if os.path.isdir(path):
             raise IsADirectoryError(f'The output path is a directory: {path}')
         return
-    except OSError as error:
-        # Windows' CRT open loses ERROR_FILENAME_EXCED_RANGE, reporting EINVAL
-        # (or ENOENT). stat uses the native API and preserves the Win32 code.
-        # Never mistake an unrelated invalid argument or missing path for length.
-        if os.name == 'nt' and error.errno in (errno.EINVAL, errno.ENOENT):
-            try:
-                os.stat(path)
-            except OSError as native_error:
-                if getattr(native_error, 'winerror', None) == 206:
-                    raise native_error from error
-        raise
     try:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
     finally:
         os.unlink(path)
+
+
+def _windows_create_probe(path):
+    # CRT open collapses overlong names into EINVAL; use the native error code.
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    # GENERIC_WRITE, no sharing, CREATE_NEW: never replace an existing file.
+    handle = create(str(path), 0x40000000, 0, None, 1, 0x80, None)
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    if not kernel.CloseHandle(handle):
+        raise ctypes.WinError(ctypes.get_last_error())
 
 
 def _filename_fits(path):
