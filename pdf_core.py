@@ -48,6 +48,17 @@ def _probe_filename(path):
         if os.path.isdir(path):
             raise IsADirectoryError(f'The output path is a directory: {path}')
         return
+    except OSError as error:
+        # Windows' CRT open loses ERROR_FILENAME_EXCED_RANGE, reporting EINVAL
+        # (or ENOENT). stat uses the native API and preserves the Win32 code.
+        # Never mistake an unrelated invalid argument or missing path for length.
+        if os.name == 'nt' and error.errno in (errno.EINVAL, errno.ENOENT):
+            try:
+                os.stat(path)
+            except OSError as native_error:
+                if getattr(native_error, 'winerror', None) == 206:
+                    raise native_error from error
+        raise
     try:
         os.close(fd)
     finally:

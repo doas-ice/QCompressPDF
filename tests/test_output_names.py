@@ -76,6 +76,25 @@ class OutputNameTests(unittest.TestCase):
                     prepare_output_path(self.root, 'x' * 1000)
                 self.assertEqual(probe.call_count, 1)
 
+    def test_windows_crt_error_requires_native_length_confirmation(self):
+        length_error = OSError(errno.ENOENT, 'filename too long')
+        length_error.winerror = 206
+        for code in (errno.EINVAL, errno.ENOENT):
+            original = OSError(code, 'ambiguous CRT error')
+            with patch('pdf_core.os.name', 'nt'), \
+                 patch('pdf_core.os.open', side_effect=original), \
+                 patch('pdf_core.os.stat', side_effect=length_error):
+                with self.assertRaises(OSError) as caught:
+                    _probe_filename('long.pdf')
+                self.assertIs(caught.exception, length_error)
+            for native_error in (FileNotFoundError(), PermissionError()):
+                with patch('pdf_core.os.name', 'nt'), \
+                     patch('pdf_core.os.open', side_effect=original), \
+                     patch('pdf_core.os.stat', side_effect=native_error):
+                    with self.assertRaises(OSError) as caught:
+                        _probe_filename('invalid.pdf')
+                    self.assertIs(caught.exception, original)
+
     def test_limits_come_from_the_destination_not_a_fixed_byte_cap(self):
         attempts = []
         def destination(path):
