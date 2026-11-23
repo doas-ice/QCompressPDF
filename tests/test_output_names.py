@@ -109,6 +109,22 @@ class OutputNameTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'shorter directory'):
                 prepare_output_path(self.root, 'test filename')
 
+    def test_windows_path_not_found_checks_short_sibling(self):
+        error = FileNotFoundError('Windows cannot find the path specified')
+        error.winerror = 3
+
+        def probe(path):
+            if len(Path(path).name) > 40:
+                raise error
+
+        with patch('pdf_core._probe_filename', side_effect=probe):
+            result = prepare_output_path(self.root, 'begin' + 'x' * 100 + 'end')
+        self.assertEqual(len(Path(result).name), 40)
+        self.assertIn('…', result)
+        with patch('pdf_core._probe_filename', side_effect=error):
+            with self.assertRaises(FileNotFoundError):
+                prepare_output_path(self.root, 'begin' + 'x' * 100 + 'end')
+
 
 if __name__ == '__main__':
     unittest.main()

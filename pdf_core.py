@@ -88,6 +88,11 @@ def _filename_fits(path):
             return False
         if getattr(error, 'winerror', None) == 123 and _windows_component_too_long(path):
             return False
+        if getattr(error, 'winerror', None) == 3:
+            # Win32 can reject a long full path as PATH_NOT_FOUND. A short
+            # sibling must be creatable before treating this as a length issue.
+            _probe_filename(str(Path(path).with_name('q.pdf')))
+            return False
         raise
 
 
@@ -134,29 +139,39 @@ def prepare_output_path(directory, stem, suffix=''):
     Probe only on save/split, never during typing. Keep both ends, the PDF
     extension and split suffix. Every probe is exclusive and immediately removed.
     """
+    return next(iter(output_path_choices(directory, stem, suffix).values()))
+
+
+def output_path_choices(directory, stem, suffix='', *, include_alternatives=False):
     full = output_path(directory, stem, suffix)
     if _filename_fits(full):
-        return full
+        return {'Full name': full}
     clusters = _graphemes(safe_stem(stem))
+    choices = {}
+    layouts = [('Keep both ends', 2)]
+    if include_alternatives:
+        layouts += [('Keep more of the beginning', 3), ('Keep more of the end', 1)]
 
-    def candidate(retained):
-        left = (retained + 1) // 2
-        right = retained // 2
-        shortened = ''.join(clusters[:left]) + '…' + ''.join(clusters[-right:])
-        return output_path(directory, shortened, suffix)
+    for label, weight in layouts:
+        def candidate(retained):
+            left = max(1, min(retained - 1, (retained * weight + 2) // 4))
+            right = retained - left
+            shortened = ''.join(clusters[:left]) + '…' + ''.join(clusters[-right:])
+            return output_path(directory, shortened, suffix)
 
-    # If even one complete cluster at each end cannot fit, shortening the
-    # directory/name is necessary; do not split a grapheme to force a save.
-    if len(clusters) < 3 or not _filename_fits(candidate(2)):
-        raise ValueError('The output path is too long. Choose a shorter directory or filename.')
-    low, high = 2, len(clusters) - 1
-    while low < high:
-        middle = (low + high + 1) // 2
-        if _filename_fits(candidate(middle)):
-            low = middle
-        else:
-            high = middle - 1
-    return candidate(low)
+        if len(clusters) < 3 or not _filename_fits(candidate(2)):
+            raise ValueError('The output path is too long. Choose a shorter directory or filename.')
+        low, high = 2, len(clusters) - 1
+        while low < high:
+            middle = (low + high + 1) // 2
+            if _filename_fits(candidate(middle)):
+                low = middle
+            else:
+                high = middle - 1
+        path = candidate(low)
+        if path not in choices.values():
+            choices[label] = path
+    return choices
 
 
 def estimate_page_indices(page_count):
@@ -292,7 +307,7 @@ def stable_snapshot(source, destination, timeout=5.0):
 
 def atomic_copy(source, destination):
     """Do not truncate an existing destination when copy/validation fails."""
-    fd, temporary = tempfile.mkstemp(prefix='.qcompress-', suffix='.pdf', dir=Path(destination).parent)
+    fd, temporary = tempfile.mkstemp(prefix='', dir=Path(destination).parent)
     try:
         with os.fdopen(fd, 'wb') as out, open(source, 'rb') as src:
             shutil.copyfileobj(src, out)

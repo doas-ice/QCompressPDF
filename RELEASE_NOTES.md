@@ -1,18 +1,8 @@
-QCompressPDF 1.6.2 reduces estimation work and learns from completed compression of the same PDF.
+QCompressPDF 1.6.3 restores in-app Windows updates and adds a preview for shortening long output filenames.
 
-### Lighter sampling
-
-- PDFs of up to 8 pages are measured fully.
-- Larger PDFs use evenly spread samples starting at 8 pages, growing with the square root of the page count to a maximum of 32: 8/50, 10/100 and 20/400 pages.
-- A smaller nested sample still accounts for shared fonts and images. Estimation remains in the background with the existing Ghostscript time budget.
-
-### Same-PDF calibration
-
-- Retrying a previously completed DPI immediately shows its measured output size without resampling.
-- Other sampled estimates use the actual/estimated size ratio from the nearest completed DPI when both measurements are available.
-- Corrections apply only to the unchanged PDF in the current retry session. They are not saved across app launches or applied to other PDFs.
-- Full-document measurements are not adjusted. Sampled estimates remain approximate and are capped at the original size, matching the app's no-enlargement behavior.
-- No new prompts or workflow steps.
+- The update prompt opens over compression settings. On Windows, Download & Install shows progress and verifies the installer checksum before opening setup. Select View Release to open the release page on either platform.
+- If the destination rejects a long filename, choose which end to emphasize and preview the shortened name before saving. The middle ellipsis preserves Unicode characters and split part suffixes.
+- When Windows reports that a long path cannot be found, the app checks whether a short filename works in the same directory before offering clipping.
 
 ### Updating
 

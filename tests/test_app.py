@@ -1,4 +1,5 @@
 import io
+import hashlib
 import os
 from pathlib import Path
 import queue
@@ -8,10 +9,11 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QComboBox, QDialogButtonBox, QLabel
+from PySide6.QtCore import QTimer
 from PySide6.QtTest import QTest
 import PyPDF2
 import compress_qt as app
@@ -64,8 +66,26 @@ class AppTests(unittest.TestCase):
         dialog.filename_edit.setText(stem)
         self.assertEqual(dialog.filename_edit.text(), stem)
         self.assertTrue(dialog.accept_btn.isEnabled())
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().reject())
         dialog.accept_dialog()
+        self.assertFalse(dialog.accepted_result)
+        self.assertEqual(dialog.filename_edit.text(), stem)
+        previews = []
+
+        def choose_shortened_name():
+            picker = QApplication.activeModalWidget()
+            options = picker.findChild(QComboBox)
+            preview = next(label for label in picker.findChildren(QLabel) if '…' in label.text())
+            previews.append(preview.text())
+            options.setCurrentIndex(1)
+            previews.append(preview.text())
+            picker.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
+
+        QTimer.singleShot(0, choose_shortened_name)
+        dialog.accept_dialog()
+        self.assertNotEqual(*previews)
         self.assertTrue(dialog.accepted_result)
+        self.assertEqual(Path(dialog.output_file).name, previews[-1])
         self.assertIn('…', Path(dialog.output_file).stem)
         self.assertTrue(Path(dialog.output_file).stem.startswith('শুরু-'))
         self.assertTrue(Path(dialog.output_file).stem.endswith('-শেষ'))
@@ -75,7 +95,7 @@ class AppTests(unittest.TestCase):
     def test_save_permission_error_keeps_preview_open(self):
         dialog = app.PreviewDialog(str(self.source), str(self.output), 100, 85,
                                    str(Path(self.folder.name)/'saved.pdf'))
-        with patch.object(app, 'prepare_output_path', side_effect=PermissionError('read-only folder')), \
+        with patch.object(app, 'output_path_choices', side_effect=PermissionError('read-only folder')), \
              patch.object(QMessageBox, 'critical') as warning:
             dialog.accept_dialog()
         self.assertFalse(dialog.accepted_result)
@@ -114,6 +134,60 @@ class AppTests(unittest.TestCase):
         dialog.estimate_timer.stop()
         dialog.estimate_poll.stop()
         dialog.close()
+
+    def test_update_waits_for_settings_and_accepts_install_click(self):
+        with patch.object(app, 'check_for_updates', return_value=(False, None, None)):
+            checker = app.UpdateChecker(self.qt, Mock())
+        self.addCleanup(checker.timer.stop)
+        version = '9.8.7'
+        names = ('QCompressPDF.exe', 'SHA256SUMS.txt')
+        urls = [f'https://github.com/{app.GITHUB_REPO}/releases/download/v{version}/{name}'
+                for name in names]
+        checker.pending = (True, version, {'assets': [
+            {'name': name, 'browser_download_url': url} for name, url in zip(names, urls)
+        ]})
+        checker.poll()
+        self.assertTrue(checker.timer.isActive())
+        settings = app.DpiSelectorDialog()
+        seen = []
+
+        def click_install():
+            dialog = QApplication.activeModalWidget()
+            if isinstance(dialog, QMessageBox):
+                seen.append(dialog.parentWidget())
+                for button in dialog.buttons():
+                    if button.text() == 'Download && Install':
+                        button.click()
+                        return
+                dialog.reject()
+            settings.reject()
+
+        with patch.object(checker, 'install', return_value=True) as install:
+            QTimer.singleShot(0, checker.poll)
+            QTimer.singleShot(50, click_install)
+            settings.exec()
+            install.assert_called_once_with(settings, *urls)
+        self.assertEqual(seen, [settings])
+
+    def test_update_download_checks_installer_digest(self):
+        payload = b'installer bytes'
+        for matches in (True, False):
+            digest = hashlib.sha256(payload if matches else b'other bytes').hexdigest()
+            installer = io.BytesIO(payload)
+            installer.headers = {'Content-Length': str(len(payload))}
+            results = queue.Queue()
+            destination = Path(self.folder.name) / f'{matches}.exe'
+            with patch.object(app.urllib.request, 'urlopen', side_effect=[
+                io.BytesIO(f'{digest}  QCompressPDF.exe\r\n'.encode()), installer,
+            ]):
+                app.download_update('installer', 'checksums', destination, results)
+            percent, error = list(results.queue)[-1]
+            if matches:
+                self.assertEqual((percent, error), (100, None))
+                self.assertEqual(destination.read_bytes(), payload)
+            else:
+                self.assertIsNone(percent)
+                self.assertIn('checksum', error)
 
     @unittest.skipUnless(shutil.which('gs') or os.name == 'nt', 'Ghostscript required')
     def test_vector_text_over_raster_compression(self):

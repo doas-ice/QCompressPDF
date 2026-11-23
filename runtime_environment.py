@@ -29,3 +29,33 @@ def application_mutex():
         raise ctypes.WinError()
     # The OS closes the handle at process exit. Concurrent app instances remain allowed.
     return handle
+
+
+def close_application_mutex(mutex):
+    import ctypes
+    from ctypes import wintypes
+
+    close = ctypes.WinDLL('kernel32', use_last_error=True).CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    if not close(mutex):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def start_windows_installer(path):
+    """Start setup outside the bundled DLL search path."""
+    import ctypes
+    from ctypes import wintypes
+    import subprocess
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.SetDllDirectoryW.argtypes = [wintypes.LPCWSTR]
+    kernel.SetDllDirectoryW.restype = wintypes.BOOL
+    bundle = getattr(sys, '_MEIPASS', None)
+    if bundle and not kernel.SetDllDirectoryW(None):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        subprocess.Popen([str(path)], cwd=str(path.parent))
+    finally:
+        if bundle:
+            kernel.SetDllDirectoryW(bundle)

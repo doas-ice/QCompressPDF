@@ -10,7 +10,7 @@ import shutil
 import queue
 import threading
 import time
-from pdf_core import (version_tuple, safe_stem, output_path, prepare_output_path, estimate_page_indices, signature, assert_unchanged,
+from pdf_core import (version_tuple, safe_stem, output_path, output_path_choices, prepare_output_path, estimate_page_indices, signature, assert_unchanged,
                       stable_snapshot, atomic_copy, gs_command, plan_split, write_range, watch_source_changes,
                       PdfEstimateHistory)
 from PySide6.QtWidgets import (
@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QInputDialog,
     QProgressDialog,
+    QProgressBar,
+    QComboBox,
     QDialogButtonBox,
     QSpinBox,
     QSlider,
@@ -37,6 +39,7 @@ import string
 import re
 import urllib.request
 import json
+import hashlib
 
 PRESETS_DPI = {
     "300 DPI (Low Compression)": 300,
@@ -175,7 +178,7 @@ def get_pdf_page_count(pdf_path):
         return 0
 
 
-CURRENT_VERSION = "1.6.2"
+CURRENT_VERSION = "1.6.3"
 
 GITHUB_REPO = "doas-ice/QCompressPDF"
 
@@ -195,36 +198,159 @@ def check_for_updates():
         return False, None, None
 
 
+def update_asset_url(data, version, name):
+    expected = f"https://github.com/{GITHUB_REPO}/releases/download/v{version}/{name}"
+    return next((expected for asset in data.get("assets", [])
+                 if asset.get("name") == name and asset.get("browser_download_url") == expected), None)
+
+
+def download_update(installer_url, checksums_url, destination, results):
+    """Stream a bounded download and publish progress without touching Qt."""
+    deadline = time.monotonic() + 180
+    try:
+        with urllib.request.urlopen(checksums_url, timeout=10) as response:
+            manifest = bytearray()
+            while chunk := response.read1(16385 - len(manifest)):
+                manifest.extend(chunk)
+                if len(manifest) > 16384 or time.monotonic() > deadline:
+                    raise ValueError("The release checksum download exceeded its size or time limit.")
+            checksums = manifest.decode("utf-8-sig")
+        match = re.search(r"^([0-9a-fA-F]{64})[ \t]+QCompressPDF\.exe\r?$", checksums, re.MULTILINE)
+        if match is None:
+            raise ValueError("The release is missing a valid installer checksum.")
+        digest = hashlib.sha256()
+        received = 0
+        with urllib.request.urlopen(installer_url, timeout=10) as response, destination.open("xb") as output:
+            total = int(response.headers.get("Content-Length", 0))
+            while chunk := response.read1(256 * 1024):
+                received += len(chunk)
+                if received > 256 * 1024 * 1024 or time.monotonic() > deadline:
+                    raise ValueError("The installer download exceeded its size or time limit.")
+                output.write(chunk)
+                digest.update(chunk)
+                if total:
+                    results.put((min(99, received * 100 // total), None))
+        if digest.hexdigest() != match[1].lower():
+            raise ValueError("The installer did not match the release checksum.")
+        results.put((100, None))
+    except Exception as error:
+        results.put((None, str(error)))
+
+
 class UpdateChecker:
-    """A daemon does network IO; a GUI timer consumes results without owning a thread."""
-    def __init__(self, app):
+    """Check in the background and prompt only when settings own keyboard focus."""
+    def __init__(self, app, launch_installer=None):
         self.results = queue.Queue()
+        self.pending = None
+        self.launch_installer = launch_installer
         self.timer = QTimer(app)
         self.timer.timeout.connect(self.poll)
         self.timer.start(250)
         threading.Thread(target=lambda: self.results.put(check_for_updates()), daemon=True).start()
-        self.dialog = None
 
     def poll(self):
-        try:
-            available, version, data = self.results.get_nowait()
-        except queue.Empty:
+        if self.pending is None:
+            try:
+                self.pending = self.results.get_nowait()
+            except queue.Empty:
+                return
+        available, version, data = self.pending
+        if not available:
+            self.timer.stop()
+            return
+        parent = QApplication.activeModalWidget()
+        if not isinstance(parent, DpiSelectorDialog):
             return
         self.timer.stop()
-        if available:
-            self.dialog = QMessageBox()
-            self.dialog.setWindowTitle("Update Available")
-            self.dialog.setText(f"QCompressPDF {version} is available. You can keep working and update later.")
-            self.dialog.addButton("Later", QMessageBox.RejectRole)
-            release = self.dialog.addButton("Open Releases", QMessageBox.AcceptRole)
-            def open_release(button):
-                if button == release:
-                    from PySide6.QtGui import QDesktopServices
-                    from PySide6.QtCore import QUrl
-                    QDesktopServices.openUrl(QUrl(f"https://github.com/{GITHUB_REPO}/releases/latest"))
-            self.dialog.buttonClicked.connect(open_release)
-            self.dialog.setModal(False)
-            self.dialog.show()
+        self.prompt(parent, version, data)
+
+    def prompt(self, parent, version, data):
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+
+        dialog = QMessageBox(parent)
+        dialog.setWindowTitle("QCompressPDF Update")
+        dialog.setIcon(QMessageBox.Information)
+        dialog.setTextFormat(Qt.PlainText)
+        dialog.setText(f"QCompressPDF {version} is available")
+        dialog.setInformativeText(f"You’re running {CURRENT_VERSION}.")
+        if notes := data.get("body"):
+            dialog.setDetailedText(notes[:12000])
+        later = dialog.addButton("Later", QMessageBox.RejectRole)
+        releases = dialog.addButton("View Release", QMessageBox.ActionRole)
+        install = None
+        installer_url = update_asset_url(data, version, "QCompressPDF.exe")
+        checksums_url = update_asset_url(data, version, "SHA256SUMS.txt")
+        if self.launch_installer and installer_url and checksums_url:
+            install = dialog.addButton("Download && Install", QMessageBox.AcceptRole)
+            dialog.setInformativeText(f"You’re running {CURRENT_VERSION}. QCompressPDF will close when setup opens.")
+        dialog.setDefaultButton(later)
+        dialog.setEscapeButton(later)
+        while True:
+            dialog.exec()
+            clicked = dialog.clickedButton()
+            if clicked is releases:
+                QDesktopServices.openUrl(QUrl(f"https://github.com/{GITHUB_REPO}/releases/tag/v{version}"))
+            elif install is not None and clicked is install:
+                if not self.install(parent, installer_url, checksums_url):
+                    continue
+                parent.reject()
+            return
+
+    def install(self, parent, installer_url, checksums_url):
+        try:
+            folder = Path(tempfile.mkdtemp(prefix="qcompress-update-"))
+        except OSError as error:
+            QMessageBox.warning(parent, "Update Failed", str(error))
+            return False
+        destination = folder / "QCompressPDF.exe"
+        results = queue.Queue()
+        progress = QDialog(parent)
+        progress.setWindowTitle("Downloading QCompressPDF")
+        progress.setWindowFlag(Qt.WindowCloseButtonHint, False)
+        layout = QVBoxLayout(progress)
+        layout.addWidget(QLabel("Downloading and verifying the Windows installer…"))
+        bar = QProgressBar(progress)
+        bar.setRange(0, 0)
+        layout.addWidget(bar)
+        # Escape and the title bar must not dismiss the download mid-write.
+        progress.reject = lambda: None
+        failure = None
+        verified = False
+
+        def poll_download():
+            nonlocal failure, verified
+            while True:
+                try:
+                    percent, failure = results.get_nowait()
+                except queue.Empty:
+                    return
+                if failure is not None or percent == 100:
+                    verified = percent == 100
+                    progress.accept()
+                    return
+                bar.setRange(0, 100)
+                bar.setValue(percent)
+
+        try:
+            timer = QTimer(progress)
+            timer.timeout.connect(poll_download)
+            timer.start(100)
+            threading.Thread(target=download_update,
+                             args=(installer_url, checksums_url, destination, results),
+                             daemon=True).start()
+            try:
+                progress.exec()
+            finally:
+                timer.stop()
+            if not verified:
+                raise ValueError(failure or "The installer download did not finish.")
+            self.launch_installer(destination)
+        except (OSError, ValueError, RuntimeError) as error:
+            shutil.rmtree(folder, ignore_errors=True)
+            QMessageBox.warning(parent, "Update Failed", f"{error}\n\nYou can retry or view the release.")
+            return False
+        return True
 
 
 class SourceChangeMonitor:
@@ -809,6 +935,39 @@ class SplitModeDialog(QDialog):
         return None, None, None
 
 
+def choose_output_path(parent, directory, stem, suffix=""):
+    choices = output_path_choices(directory, stem, suffix, include_alternatives=True)
+    if "Full name" in choices:
+        return choices["Full name"]
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Shorten Output Filename")
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(QLabel("The full filename is too long for this folder. Choose how to shorten it."))
+    options = QComboBox(dialog)
+    options.addItems(list(choices))
+    layout.addWidget(options)
+    layout.addWidget(QLabel("Filename preview"))
+    preview = QLabel(dialog)
+    preview.setTextFormat(Qt.PlainText)
+    preview.setWordWrap(True)
+    preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    layout.addWidget(preview)
+
+    def update_preview(label):
+        preview.setText(Path(choices[label]).name)
+
+    options.currentTextChanged.connect(update_preview)
+    update_preview(options.currentText())
+    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    buttons.button(QDialogButtonBox.Ok).setText("Use This Name")
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+    if dialog.exec() == QDialog.Accepted:
+        return choices[options.currentText()]
+    return None
+
+
 class PreviewDialog(QDialog):
     def __init__(
         self, original, temp_compressed, dpi, quality, default_output, parent=None, source_signature=None
@@ -934,8 +1093,13 @@ class PreviewDialog(QDialog):
                 # Resolve every destination before writing, so cancelling a
                 # conflict dialog cannot leave half of the requested split.
                 targets = []
+                suffix = f"_part{len(best_split)}"
+                example = choose_output_path(self, self.directory_edit.text(), self.filename_edit.text(), suffix)
+                if example is None:
+                    return
+                split_stem = Path(example).stem.removesuffix(suffix)
                 for part_num in range(1, len(best_split) + 1):
-                    target = prepare_output_path(self.directory_edit.text(), self.filename_edit.text(), f"_part{part_num}")
+                    target = prepare_output_path(Path(example).parent, split_stem, f"_part{part_num}")
                     while os.path.exists(target):
                         answer = QMessageBox.question(
                             self, "File Exists", f"The file '{target}' already exists. Overwrite?",
@@ -948,7 +1112,9 @@ class PreviewDialog(QDialog):
                             self, "Save Split PDF As", target, "PDF files (*.pdf)")
                         if not selected or not replacement:
                             return
-                        target = prepare_output_path(os.path.dirname(replacement), Path(replacement).stem)
+                        target = choose_output_path(self, os.path.dirname(replacement), Path(replacement).stem)
+                        if target is None:
+                            return
                     canonical = os.path.normcase(os.path.realpath(target))
                     if canonical == os.path.normcase(os.path.realpath(self.original)):
                         raise ValueError("Choose a split output other than the original PDF.")
@@ -1052,10 +1218,13 @@ class PreviewDialog(QDialog):
         if not self.validate_name():
             return
         try:
-            self.output_file = prepare_output_path(self.directory_edit.text(), self.filename_edit.text())
+            target = choose_output_path(self, self.directory_edit.text(), self.filename_edit.text())
         except (OSError, ValueError) as error:
             QMessageBox.critical(self, "Output Filename", str(error))
             return
+        if target is None:
+            return
+        self.output_file = target
         self.accepted_result = True
         self.accept()
 
@@ -1087,8 +1256,18 @@ def show_loading_dialog(parent, text="Compressing PDF..."):
 def main():
     mutex = application_mutex()
     app = QApplication(sys.argv)
+    def launch_installer(path):
+        nonlocal mutex
+        from runtime_environment import close_application_mutex, start_windows_installer
+        close_application_mutex(mutex)
+        try:
+            start_windows_installer(path)
+        except OSError:
+            mutex = application_mutex()
+            raise
+
     # Keep a Python reference for the lifetime of the workflow.
-    update_checker = UpdateChecker(app)
+    update_checker = UpdateChecker(app, launch_installer if sys.platform == "win32" else None)
     # File selection
     if len(sys.argv) > 1:
         input_file = sys.argv[1]
@@ -1173,7 +1352,9 @@ def main():
                         )
                         if ok and new_file:
                             try:
-                                final_output_file = prepare_output_path(os.path.dirname(new_file), Path(new_file).stem)
+                                target = choose_output_path(None, os.path.dirname(new_file), Path(new_file).stem)
+                                if target is not None:
+                                    final_output_file = target
                             except (OSError, ValueError) as error:
                                 QMessageBox.critical(None, "Output Filename", str(error))
                                 continue
