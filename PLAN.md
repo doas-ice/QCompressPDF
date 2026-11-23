@@ -89,3 +89,14 @@ Requested outcome: improve estimates with document-sized samples and preserve fu
 - Focused proof: real-file long-name saves and PDF page validation; actual long Bangla fallback; shared-cluster/emoji preservation; overwrite collisions and unrelated errors; unchanged typing; sample scaling; small-PDF size comparison; mixed-document and shared-resource Ghostscript fixtures. On the 100-page mixed fixture, actual output was 0.065 MB, the old three-page estimate 2.82 MB, and the new estimate 0.06 MB. This is a fixture result, not a universal accuracy guarantee.
 - Deployment: run the full regression suite and existing Windows migration gates, verify draft release checksums, then publish v1.6.1. Existing installer isolation and optional legacy-uninstall behavior are unchanged.
 - Windows CI exposed CRT file creation returning generic EINVAL for overlong names. Windows filename probes use native exclusive `CreateFileW` so length error 206 is preserved; CRT open and stat did not retain it reliably. Windows invalid-name error 123 triggers shortening only when the filename exceeds the actual volume component limit reported by GetVolumeInformationW. Unrelated errors still propagate. GUI tests now fail on unexpected error dialogs and have a CI timeout instead of hanging.
+
+### Follow-up: lighter estimation samples
+
+- Reduce coverage to 8 pages for a 50-page document, growing with floor(sqrt(page count)) to a 32-page cap. Measure documents of up to 8 pages fully. Preserve evenly spaced coverage, nested shared-resource estimation, background execution and time budget.
+- Verify sample boundaries and actual Ghostscript accuracy fixtures with the smaller samples.
+
+### Follow-up: same-PDF estimate calibration
+
+- Keep thread-safe numeric sample and completed-size measurements in the current PDF retry session, keyed by DPI and source signature. Pair late-arriving samples with completed compression results without delaying the workflow.
+- Reuse actual size immediately at an already completed DPI. Adjust other sampled estimates using the nearest completed DPI's actual/raw-estimate ratio, capped at source size. Do not adjust full-document measurements or learn from failed compression. Changed sources and other PDF sessions do not inherit corrections.
+- Verified 7 estimate tests and 11 GUI tests, including real Ghostscript fixtures, ratio correction, late samples, changed-source invalidation and measured-size reuse without a worker.

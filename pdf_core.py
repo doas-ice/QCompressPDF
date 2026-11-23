@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import threading
 import time
 
 import PyPDF2
@@ -162,10 +163,40 @@ def estimate_page_indices(page_count):
     """Whole small documents; bounded, evenly spread samples for larger ones."""
     if page_count <= 0:
         raise ValueError('The PDF has no pages.')
-    count = min(page_count, 64, max(24, math.ceil(2 * math.sqrt(page_count))))
+    count = min(page_count, 32, max(8, math.isqrt(page_count)))
     if count == 1:
         return [0]
     return [round(i * (page_count - 1) / (count - 1)) for i in range(count)]
+
+
+class PdfEstimateHistory:
+    """Measurements for one input PDF's retry session, never shared across files."""
+
+    def __init__(self):
+        self.samples = {}
+        self.actuals = {}
+        self.lock = threading.Lock()
+
+    def record_sample(self, key, size):
+        with self.lock:
+            self.samples[key] = size
+
+    def record_actual(self, key, size):
+        with self.lock:
+            self.actuals[key] = size
+
+    def actual_size(self, key):
+        with self.lock:
+            return self.actuals.get(key)
+
+    def correct(self, key, size):
+        with self.lock:
+            matches = [k for k in self.actuals if k[1] == key[1]
+                       and self.samples.get(k, 0) > 0]
+            if not matches:
+                return size, False
+            nearest = min(matches, key=lambda k: abs(k[0] - key[0]))
+            return size * self.actuals[nearest] / self.samples[nearest], True
 
 
 def signature(path):

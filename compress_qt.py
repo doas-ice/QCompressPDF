@@ -11,7 +11,8 @@ import queue
 import threading
 import time
 from pdf_core import (version_tuple, safe_stem, output_path, prepare_output_path, estimate_page_indices, signature, assert_unchanged,
-                      stable_snapshot, atomic_copy, gs_command, plan_split, write_range, watch_source_changes)
+                      stable_snapshot, atomic_copy, gs_command, plan_split, write_range, watch_source_changes,
+                      PdfEstimateHistory)
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
@@ -174,7 +175,7 @@ def get_pdf_page_count(pdf_path):
         return 0
 
 
-CURRENT_VERSION = "1.6.1"
+CURRENT_VERSION = "1.6.2"
 
 GITHUB_REPO = "doas-ice/QCompressPDF"
 
@@ -448,7 +449,7 @@ class CompressThread(QThread):
             print(f"Error parsing line '{line}': {e}")
 
 
-def estimate_size(source, dpi, key, results):
+def estimate_size(source, dpi, key, results, history=None):
     try:
         with tempfile.TemporaryDirectory(prefix="qcompress-estimate-") as folder:
             deadline = time.monotonic() + 30
@@ -495,9 +496,18 @@ def estimate_size(source, dpi, key, results):
             if len(samples) == 2:
                 growth = max(0, sizes[0] - sizes[1]) / (len(indices) - len(samples[1][1]))
                 projected += growth * (count - len(indices))
-            estimated = min(os.path.getsize(source), projected) / 1024 / 1024
+            source_size = os.path.getsize(source)
+            projected = min(source_size, projected)
+            calibrated = False
+            if history is not None:
+                history.record_sample(key, projected)
+                if len(indices) < count:
+                    projected, calibrated = history.correct(key, projected)
+            estimated = min(source_size, projected) / 1024 / 1024
             coverage = (f"all {count} pages measured" if len(indices) == count
                         else f"sample-based: {len(indices)} of {count} pages; actual size may vary")
+            if calibrated:
+                coverage += "; adjusted using this PDF's completed compression"
             message = f"Estimated size: ≈ {estimated:.2f} MB ({coverage})."
     except Exception:
         message = "Estimated size unavailable; you can still compress and inspect the actual size."
@@ -521,13 +531,14 @@ class SplitPlanThread(QThread):
 
 
 class DpiSelectorDialog(QDialog):
-    def __init__(self, input_file=None, parent=None):
+    def __init__(self, input_file=None, parent=None, estimate_history=None):
         super().__init__(parent)
         self.setWindowTitle("Select DPI for Compression")
         self.setMinimumWidth(350)
         layout = QVBoxLayout(self)
         self.selected_dpi = 300  # Default
         self.input_file = input_file
+        self.estimate_history = estimate_history if estimate_history is not None else PdfEstimateHistory()
         self.estimate_results = queue.Queue()
         self.estimate_running = False
         self.estimate_cache = {}
@@ -636,13 +647,19 @@ class DpiSelectorDialog(QDialog):
         except OSError:
             self.estimate_label.setText("Estimated size unavailable: cannot read input.")
             return
+        actual = self.estimate_history.actual_size(key)
+        if actual is not None:
+            self.estimate_label.setText(f"Measured size: {actual / 1024 / 1024:.2f} MB "
+                                        "(previous compression at this DPI).")
+            return
         if key in self.estimate_cache:
             self.estimate_label.setText(self.estimate_cache[key])
             return
         self.estimate_running = True
         # The worker captures no Qt objects and can finish safely after closure.
         results, source = self.estimate_results, self.input_file
-        threading.Thread(target=estimate_size, args=(source, dpi, key, results), daemon=True).start()
+        threading.Thread(target=estimate_size,
+                         args=(source, dpi, key, results, self.estimate_history), daemon=True).start()
 
     def poll_estimate(self):
         try:
@@ -1084,7 +1101,8 @@ def main():
     source_monitor = SourceChangeMonitor(input_file, app)
     try:
         # DPI selection
-        dpi_dialog = DpiSelectorDialog(input_file)
+        estimate_history = PdfEstimateHistory()
+        dpi_dialog = DpiSelectorDialog(input_file, estimate_history=estimate_history)
         dpi = dpi_dialog.get_dpi()
         if dpi is None:
             return
@@ -1123,6 +1141,7 @@ def main():
             if os.path.exists(temp_output_file):
                 os.remove(temp_output_file)
             return
+        estimate_history.record_actual((dpi, thread.source_signature), os.path.getsize(temp_output_file))
         # Preview dialog
         default_output_file = str(
             Path(input_file).with_name(Path(input_file).stem + f"_compressed.pdf")
@@ -1191,7 +1210,7 @@ def main():
                 )
                 if retry == QMessageBox.Yes:
                     # Re-run DPI selection
-                    dpi_dialog = DpiSelectorDialog(input_file)
+                    dpi_dialog = DpiSelectorDialog(input_file, estimate_history=estimate_history)
                     new_dpi = dpi_dialog.get_dpi()
                     if new_dpi is None:
                         break
@@ -1229,6 +1248,7 @@ def main():
                         if os.path.exists(temp_output_file):
                             os.remove(temp_output_file)
                         break
+                    estimate_history.record_actual((dpi, thread.source_signature), os.path.getsize(temp_output_file))
                     continue
                 else:
                     break

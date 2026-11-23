@@ -11,29 +11,53 @@ from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import PyPDF2
 import compress_qt as app
-from pdf_core import estimate_page_indices, gs_command, signature
+from pdf_core import estimate_page_indices, gs_command, signature, PdfEstimateHistory
 from test_pdf_core import pdf_bytes
 
 
 class EstimateTests(unittest.TestCase):
+    def test_calibration_uses_nearest_dpi_and_unchanged_source_only(self):
+        history = PdfEstimateHistory()
+        history.record_sample((100, 'original'), 1000)
+        history.record_actual((100, 'original'), 1500)
+        history.record_sample((300, 'original'), 2000)
+        history.record_actual((300, 'original'), 1600)
+        self.assertEqual(history.correct((150, 'original'), 1200), (1800, True))
+        self.assertEqual(history.correct((250, 'original'), 1500), (1200, True))
+        self.assertEqual(history.correct((150, 'changed'), 1200), (1200, False))
+        self.assertIsNone(history.actual_size((100, 'changed')))
+        self.assertEqual(PdfEstimateHistory().correct((150, 'original'), 1200), (1200, False))
+
+    def test_estimate_finishing_after_compression_can_still_calibrate(self):
+        history = PdfEstimateHistory()
+        key = (100, 'original')
+        history.record_actual(key, 1500)
+        self.assertEqual(history.actual_size(key), 1500)
+        self.assertEqual(history.correct((150, 'original'), 1200), (1200, False))
+        history.record_sample(key, 0)
+        self.assertEqual(history.correct((150, 'original'), 1200), (1200, False))
+        history.record_sample(key, 1000)
+        self.assertEqual(history.correct((150, 'original'), 1200), (1800, True))
+
     def test_coverage_scales_is_bounded_and_includes_both_ends(self):
         previous = 0
-        for pages in (1, 3, 12, 24, 25, 50, 100, 400, 1000, 10000):
+        for pages in (1, 3, 7, 8, 12, 24, 25, 49, 50, 64, 100, 400, 1000, 10000):
             indices = estimate_page_indices(pages)
             self.assertEqual(indices, sorted(set(indices)))
             self.assertEqual(indices[0], 0)
             self.assertEqual(indices[-1], pages - 1)
             self.assertGreaterEqual(len(indices), previous)
-            self.assertLessEqual(len(indices), min(pages, 64))
-            if pages <= 24:
+            self.assertLessEqual(len(indices), min(pages, 32))
+            if pages <= 8:
                 self.assertEqual(indices, list(range(pages)))
             gaps = [b-a for a, b in zip(indices, indices[1:])]
             if gaps:
                 self.assertLessEqual(max(gaps) - min(gaps), 1)
             previous = len(indices)
-        self.assertEqual(len(estimate_page_indices(100)), 24)
-        self.assertEqual(len(estimate_page_indices(400)), 40)
-        self.assertEqual(len(estimate_page_indices(1000)), 64)
+        self.assertEqual(len(estimate_page_indices(50)), 8)
+        self.assertEqual(len(estimate_page_indices(100)), 10)
+        self.assertEqual(len(estimate_page_indices(400)), 20)
+        self.assertEqual(len(estimate_page_indices(1000)), 31)
 
     @unittest.skipUnless(shutil.which('gs') or os.name == 'nt', 'Ghostscript required')
     def test_full_document_estimate_matches_actual_small_pdf(self):
@@ -62,7 +86,16 @@ class EstimateTests(unittest.TestCase):
             key = (100, signature(source))
             app.estimate_size(str(source), 100, key, results)
             improved = results.get()[1]
-            self.assertIn('24 of 100', improved)
+            self.assertIn('10 of 100', improved)
+            history = PdfEstimateHistory()
+            history.record_sample((150, key[1]), 2000)
+            history.record_actual((150, key[1]), 1000)
+            app.estimate_size(str(source), 100, key, results, history)
+            adjusted = results.get()[1]
+            self.assertIn('adjusted using this PDF', adjusted)
+            self.assertAlmostEqual(float(re.search(r'≈ ([0-9.]+) MB', adjusted)[1]),
+                                   float(re.search(r'≈ ([0-9.]+) MB', improved)[1]) / 2,
+                                   delta=0.0076)
             old_sample, old_result = Path(directory)/'old.pdf', Path(directory)/'old-result.pdf'
             reader = PyPDF2.PdfReader(str(source))
             writer = PyPDF2.PdfWriter()

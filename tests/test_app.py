@@ -99,6 +99,22 @@ class AppTests(unittest.TestCase):
             checker.timer.stop()
             dialog.close()
 
+    def test_retry_reuses_measured_size_without_sampling(self):
+        history = app.PdfEstimateHistory()
+        history.record_actual((300, signature(self.source)), 123456)
+        dialog = app.DpiSelectorDialog(str(self.source), estimate_history=history)
+        with patch.object(app.threading, 'Thread') as worker:
+            dialog.start_estimate()
+            worker.assert_not_called()
+        self.assertIn('Measured size: 0.12 MB', dialog.estimate_label.text())
+        self.source.write_bytes(pdf_bytes([0]*4))
+        with patch.object(app.threading, 'Thread') as worker:
+            dialog.start_estimate()
+            worker.assert_called_once()
+        dialog.estimate_timer.stop()
+        dialog.estimate_poll.stop()
+        dialog.close()
+
     @unittest.skipUnless(shutil.which('gs') or os.name == 'nt', 'Ghostscript required')
     def test_vector_text_over_raster_compression(self):
         # Use actual Ghostscript, retain text and every page, never enlarge output.

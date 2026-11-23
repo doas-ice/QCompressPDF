@@ -1,18 +1,18 @@
-QCompressPDF 1.6.1 improves compressed-size estimates and long Unicode filenames.
+QCompressPDF 1.6.2 reduces estimation work and learns from completed compression of the same PDF.
 
-### More representative estimates
+### Lighter sampling
 
-- PDFs with up to 24 pages are measured in full.
-- Larger PDFs sample pages evenly across the whole document. Coverage grows with page count, up to 64 pages: for example, 24 of 100, 40 of 400, and 64 of 1000.
-- Two nested samples estimate shared font/image overhead separately from per-page growth.
-- The estimate shows its page coverage, runs in the background, and uses a 30-second Ghostscript budget. Preview still shows the actual size; unusual page distributions can still make a sample estimate inaccurate.
+- PDFs of up to 8 pages are measured fully.
+- Larger PDFs use evenly spread samples starting at 8 pages, growing with the square root of the page count to a maximum of 32: 8/50, 10/100 and 20/400 pages.
+- A smaller nested sample still accounts for shared fonts and images. Estimation remains in the background with the existing Ghostscript time budget.
 
-### Preserve full filenames when possible
+### Same-PDF calibration
 
-- Removed the unconditional filename byte cap and conservative Windows path cutoff. Names are no longer truncated while typing.
-- Saving/splitting tries the full name on the destination filesystem using an exclusive creation probe, immediately removed. Existing files are not modified by these probes.
-- Only a filename-length error triggers shortening. The app keeps both ends with a middle ellipsis and preserves Bangla conjuncts, combining marks, emoji, the PDF extension, and generated split suffixes.
-- Permission, disk-full and I/O errors are reported rather than disguised as filename problems. Overwrite confirmation applies to the final resolved name; PDF saves remain atomic.
+- Retrying a previously completed DPI immediately shows its measured output size without resampling.
+- Other sampled estimates use the actual/estimated size ratio from the nearest completed DPI when both measurements are available.
+- Corrections apply only to the unchanged PDF in the current retry session. They are not saved across app launches or applied to other PDFs.
+- Full-document measurements are not adjusted. Sampled estimates remain approximate and are capped at the original size, matching the app's no-enlargement behavior.
+- No new prompts or workflow steps.
 
 ### Updating
 
