@@ -1,7 +1,4 @@
-QCompressPDF 1.6.4 improves the filename shortening dialog.
-
-- Use a slider to move the ellipsis and choose how much of each end of the filename to keep.
-- The preview wraps long names and the dialog grows to show them. The PDF extension and split part suffixes remain visible.
+QCompressPDF 1.6.5 fixes the filename shortening dialog. The preview opens at the correct height, and the dialog and slider stay in place while you adjust the ellipsis.
 
 ### Updating
 

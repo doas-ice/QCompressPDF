@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSlider,
 )
-from PySide6.QtGui import QTextOption
+from PySide6.QtGui import QTextDocument, QTextOption
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 import PyPDF2
 import string
@@ -179,7 +179,7 @@ def get_pdf_page_count(pdf_path):
         return 0
 
 
-CURRENT_VERSION = "1.6.4"
+CURRENT_VERSION = "1.6.5"
 
 GITHUB_REPO = "doas-ice/QCompressPDF"
 
@@ -978,7 +978,18 @@ def choose_output_path(parent, directory, stem, suffix=""):
 
     paths = {50: default}
     margins = layout.contentsMargins()
-    preview_width = dialog.width() - margins.left() - margins.right() - 2 * preview.frameWidth()
+    preview.ensurePolished()
+    frame = 2 * preview.frameWidth()
+    # Measure independently of QTextEdit's viewport, which is still narrow
+    # before the dialog is laid out. Keep the controls steady while dragging.
+    measurement = QTextDocument()
+    measurement.setDefaultFont(preview.font())
+    measurement.setDocumentMargin(preview.document().documentMargin())
+    measurement.setDefaultTextOption(preview.document().defaultTextOption())
+    measurement.setPlainText(Path(default).name)
+    measurement.setTextWidth(dialog.width() - margins.left() - margins.right() - frame)
+    height = int(measurement.size().height() + 1) + frame
+    preview.setFixedHeight(min(height, screen.height() // 2))
 
     def update_preview(position):
         try:
@@ -989,14 +1000,10 @@ def choose_output_path(parent, directory, stem, suffix=""):
         except (OSError, ValueError) as error:
             preview.setPlainText(str(error))
             use_name.setEnabled(False)
-        preview.document().setTextWidth(preview_width)
-        content_height = int(preview.document().size().height() + 1) + 2 * preview.frameWidth()
-        preview.setFixedHeight(min(content_height, screen.height() // 2))
-        layout.activate()
-        dialog.adjustSize()
 
     slider.valueChanged.connect(update_preview)
     update_preview(slider.value())
+    dialog.adjustSize()
     if dialog.exec() == QDialog.Accepted:
         return paths.get(slider.value())
     return None

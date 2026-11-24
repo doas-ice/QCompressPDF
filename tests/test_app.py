@@ -72,6 +72,8 @@ class AppTests(unittest.TestCase):
         self.assertEqual(dialog.filename_edit.text(), stem)
         previews = []
         scroll_ranges = []
+        geometries = []
+        initial_spacing = []
 
         def choose_shortened_name():
             picker = QApplication.activeModalWidget()
@@ -79,7 +81,10 @@ class AppTests(unittest.TestCase):
             preview = picker.findChild(QTextEdit)
             previews.append(preview.toPlainText())
             scroll_ranges.append(preview.verticalScrollBar().maximum())
+            initial_spacing.append(preview.viewport().height() - preview.document().size().height())
+            geometries.append((picker.geometry(), options.mapToGlobal(options.rect().topLeft())))
             options.setValue(85)
+            geometries.append((picker.geometry(), options.mapToGlobal(options.rect().topLeft())))
             previews.append(preview.toPlainText())
             scroll_ranges.append(preview.verticalScrollBar().maximum())
             picker.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
@@ -89,6 +94,8 @@ class AppTests(unittest.TestCase):
         self.assertNotEqual(*previews)
         self.assertGreater(previews[1].index("…"), previews[0].index("…"))
         self.assertEqual(scroll_ranges, [0, 0])
+        self.assertLess(initial_spacing[0], 3)
+        self.assertEqual(geometries[0], geometries[1])
         self.assertTrue(dialog.accepted_result)
         self.assertEqual(Path(dialog.output_file).name, previews[-1])
         self.assertIn('…', Path(dialog.output_file).stem)
