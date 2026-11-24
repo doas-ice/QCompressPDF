@@ -1,8 +1,7 @@
-QCompressPDF 1.6.3 restores in-app Windows updates and adds a preview for shortening long output filenames.
+QCompressPDF 1.6.4 improves the filename shortening dialog.
 
-- The update prompt opens over compression settings. On Windows, Download & Install shows progress and verifies the installer checksum before opening setup. Select View Release to open the release page on either platform.
-- If the destination rejects a long filename, choose which end to emphasize and preview the shortened name before saving. The middle ellipsis preserves Unicode characters and split part suffixes.
-- When Windows reports that a long path cannot be found, the app checks whether a short filename works in the same directory before offering clipping.
+- Use a slider to move the ellipsis and choose how much of each end of the filename to keep.
+- The preview wraps long names and the dialog grows to show them. The PDF extension and split part suffixes remain visible.
 
 ### Updating
 

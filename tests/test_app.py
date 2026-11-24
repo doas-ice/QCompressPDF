@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtWidgets import QApplication, QMessageBox, QComboBox, QDialogButtonBox, QLabel
+from PySide6.QtWidgets import QApplication, QMessageBox, QSlider, QDialogButtonBox, QTextEdit
 from PySide6.QtCore import QTimer
 from PySide6.QtTest import QTest
 import PyPDF2
@@ -71,19 +71,24 @@ class AppTests(unittest.TestCase):
         self.assertFalse(dialog.accepted_result)
         self.assertEqual(dialog.filename_edit.text(), stem)
         previews = []
+        scroll_ranges = []
 
         def choose_shortened_name():
             picker = QApplication.activeModalWidget()
-            options = picker.findChild(QComboBox)
-            preview = next(label for label in picker.findChildren(QLabel) if '…' in label.text())
-            previews.append(preview.text())
-            options.setCurrentIndex(1)
-            previews.append(preview.text())
+            options = picker.findChild(QSlider)
+            preview = picker.findChild(QTextEdit)
+            previews.append(preview.toPlainText())
+            scroll_ranges.append(preview.verticalScrollBar().maximum())
+            options.setValue(85)
+            previews.append(preview.toPlainText())
+            scroll_ranges.append(preview.verticalScrollBar().maximum())
             picker.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).click()
 
         QTimer.singleShot(0, choose_shortened_name)
         dialog.accept_dialog()
         self.assertNotEqual(*previews)
+        self.assertGreater(previews[1].index("…"), previews[0].index("…"))
+        self.assertEqual(scroll_ranges, [0, 0])
         self.assertTrue(dialog.accepted_result)
         self.assertEqual(Path(dialog.output_file).name, previews[-1])
         self.assertIn('…', Path(dialog.output_file).stem)
@@ -95,7 +100,7 @@ class AppTests(unittest.TestCase):
     def test_save_permission_error_keeps_preview_open(self):
         dialog = app.PreviewDialog(str(self.source), str(self.output), 100, 85,
                                    str(Path(self.folder.name)/'saved.pdf'))
-        with patch.object(app, 'output_path_choices', side_effect=PermissionError('read-only folder')), \
+        with patch.object(app, 'prepare_output_path', side_effect=PermissionError('read-only folder')), \
              patch.object(QMessageBox, 'critical') as warning:
             dialog.accept_dialog()
         self.assertFalse(dialog.accepted_result)

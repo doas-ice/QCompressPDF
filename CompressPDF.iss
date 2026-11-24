@@ -2,7 +2,7 @@
 #define PayloadVersion GetEnv("QCOMPRESSPDF_VERSION")
 #if PayloadVersion == ""
   #undef PayloadVersion
-  #define PayloadVersion "1.6.3"
+  #define PayloadVersion "1.6.4"
 #endif
 [Setup]
 AppId=QCompressPDF.Bundled

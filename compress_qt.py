@@ -10,7 +10,7 @@ import shutil
 import queue
 import threading
 import time
-from pdf_core import (version_tuple, safe_stem, output_path, output_path_choices, prepare_output_path, estimate_page_indices, signature, assert_unchanged,
+from pdf_core import (version_tuple, safe_stem, output_path, prepare_output_path, estimate_page_indices, signature, assert_unchanged,
                       stable_snapshot, atomic_copy, gs_command, plan_split, write_range, watch_source_changes,
                       PdfEstimateHistory)
 from PySide6.QtWidgets import (
@@ -28,11 +28,12 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QProgressDialog,
     QProgressBar,
-    QComboBox,
+    QTextEdit,
     QDialogButtonBox,
     QSpinBox,
     QSlider,
 )
+from PySide6.QtGui import QTextOption
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 import PyPDF2
 import string
@@ -178,7 +179,7 @@ def get_pdf_page_count(pdf_path):
         return 0
 
 
-CURRENT_VERSION = "1.6.3"
+CURRENT_VERSION = "1.6.4"
 
 GITHUB_REPO = "doas-ice/QCompressPDF"
 
@@ -936,35 +937,68 @@ class SplitModeDialog(QDialog):
 
 
 def choose_output_path(parent, directory, stem, suffix=""):
-    choices = output_path_choices(directory, stem, suffix, include_alternatives=True)
-    if "Full name" in choices:
-        return choices["Full name"]
+    default = prepare_output_path(directory, stem, suffix)
+    if default == output_path(directory, stem, suffix):
+        return default
+
     dialog = QDialog(parent)
     dialog.setWindowTitle("Shorten Output Filename")
+    screen = dialog.screen().availableGeometry()
+    dialog.setFixedWidth(min(580, screen.width() - 32))
     layout = QVBoxLayout(dialog)
-    layout.addWidget(QLabel("The full filename is too long for this folder. Choose how to shorten it."))
-    options = QComboBox(dialog)
-    options.addItems(list(choices))
-    layout.addWidget(options)
+    explanation = QLabel("Move the slider to choose where the ellipsis appears.")
+    explanation.setWordWrap(True)
+    layout.addWidget(explanation)
+
+    slider = QSlider(Qt.Horizontal, dialog)
+    slider.setAccessibleName("Ellipsis position")
+    slider.setRange(0, 100)
+    slider.setSingleStep(5)
+    slider.setPageStep(10)
+    slider.setValue(50)
+    layout.addWidget(slider)
+    ends = QHBoxLayout()
+    ends.addWidget(QLabel("Keep more of the end"))
+    ends.addStretch()
+    ends.addWidget(QLabel("Keep more of the beginning"))
+    layout.addLayout(ends)
+
     layout.addWidget(QLabel("Filename preview"))
-    preview = QLabel(dialog)
-    preview.setTextFormat(Qt.PlainText)
-    preview.setWordWrap(True)
-    preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    preview = QTextEdit(dialog)
+    preview.setAccessibleName("Filename preview")
+    preview.setReadOnly(True)
+    preview.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
     layout.addWidget(preview)
-
-    def update_preview(label):
-        preview.setText(Path(choices[label]).name)
-
-    options.currentTextChanged.connect(update_preview)
-    update_preview(options.currentText())
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-    buttons.button(QDialogButtonBox.Ok).setText("Use This Name")
+    use_name = buttons.button(QDialogButtonBox.Ok)
+    use_name.setText("Use This Name")
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)
+
+    paths = {50: default}
+    margins = layout.contentsMargins()
+    preview_width = dialog.width() - margins.left() - margins.right() - 2 * preview.frameWidth()
+
+    def update_preview(position):
+        try:
+            if position not in paths:
+                paths[position] = prepare_output_path(directory, stem, suffix, position=position)
+            preview.setPlainText(Path(paths[position]).name)
+            use_name.setEnabled(True)
+        except (OSError, ValueError) as error:
+            preview.setPlainText(str(error))
+            use_name.setEnabled(False)
+        preview.document().setTextWidth(preview_width)
+        content_height = int(preview.document().size().height() + 1) + 2 * preview.frameWidth()
+        preview.setFixedHeight(min(content_height, screen.height() // 2))
+        layout.activate()
+        dialog.adjustSize()
+
+    slider.valueChanged.connect(update_preview)
+    update_preview(slider.value())
     if dialog.exec() == QDialog.Accepted:
-        return choices[options.currentText()]
+        return paths.get(slider.value())
     return None
 
 

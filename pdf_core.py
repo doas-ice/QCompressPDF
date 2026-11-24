@@ -133,45 +133,30 @@ def _graphemes(text):
     return clusters
 
 
-def prepare_output_path(directory, stem, suffix=''):
-    """Keep the full name unless the actual destination rejects its length.
-
-    Probe only on save/split, never during typing. Keep both ends, the PDF
-    extension and split suffix. Every probe is exclusive and immediately removed.
-    """
-    return next(iter(output_path_choices(directory, stem, suffix).values()))
-
-
-def output_path_choices(directory, stem, suffix='', *, include_alternatives=False):
+def prepare_output_path(directory, stem, suffix='', *, position=50):
+    """Try the full name first, then find a fitting grapheme-safe ellipsis."""
     full = output_path(directory, stem, suffix)
     if _filename_fits(full):
-        return {'Full name': full}
+        return full
+
     clusters = _graphemes(safe_stem(stem))
-    choices = {}
-    layouts = [('Keep both ends', 2)]
-    if include_alternatives:
-        layouts += [('Keep more of the beginning', 3), ('Keep more of the end', 1)]
 
-    for label, weight in layouts:
-        def candidate(retained):
-            left = max(1, min(retained - 1, (retained * weight + 2) // 4))
-            right = retained - left
-            shortened = ''.join(clusters[:left]) + '…' + ''.join(clusters[-right:])
-            return output_path(directory, shortened, suffix)
+    def candidate(retained):
+        left = max(1, min(retained - 1, (retained * position + 50) // 100))
+        right = retained - left
+        shortened = ''.join(clusters[:left]) + '…' + ''.join(clusters[-right:])
+        return output_path(directory, shortened, suffix)
 
-        if len(clusters) < 3 or not _filename_fits(candidate(2)):
-            raise ValueError('The output path is too long. Choose a shorter directory or filename.')
-        low, high = 2, len(clusters) - 1
-        while low < high:
-            middle = (low + high + 1) // 2
-            if _filename_fits(candidate(middle)):
-                low = middle
-            else:
-                high = middle - 1
-        path = candidate(low)
-        if path not in choices.values():
-            choices[label] = path
-    return choices
+    if len(clusters) < 3 or not _filename_fits(candidate(2)):
+        raise ValueError('The output path is too long. Choose a shorter directory or filename.')
+    low, high = 2, len(clusters) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _filename_fits(candidate(middle)):
+            low = middle
+        else:
+            high = middle - 1
+    return candidate(low)
 
 
 def estimate_page_indices(page_count):
