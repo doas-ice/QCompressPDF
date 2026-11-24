@@ -1,4 +1,4 @@
-QCompressPDF 1.6.5 fixes the filename shortening dialog. The preview opens at the correct height, and the dialog and slider stay in place while you adjust the ellipsis.
+QCompressPDF 1.6.6 fixes the filename shortening dialog. The preview opens at the correct height, and the slider stays in place while you adjust the ellipsis.
 
 ### Updating
 

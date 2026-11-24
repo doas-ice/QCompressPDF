@@ -179,7 +179,7 @@ def get_pdf_page_count(pdf_path):
         return 0
 
 
-CURRENT_VERSION = "1.6.5"
+CURRENT_VERSION = "1.6.6"
 
 GITHUB_REPO = "doas-ice/QCompressPDF"
 
@@ -981,15 +981,13 @@ def choose_output_path(parent, directory, stem, suffix=""):
     preview.ensurePolished()
     frame = 2 * preview.frameWidth()
     # Measure independently of QTextEdit's viewport, which is still narrow
-    # before the dialog is laid out. Keep the controls steady while dragging.
+    # before the dialog is laid out. Only grow when a new position needs room.
     measurement = QTextDocument()
     measurement.setDefaultFont(preview.font())
     measurement.setDocumentMargin(preview.document().documentMargin())
     measurement.setDefaultTextOption(preview.document().defaultTextOption())
-    measurement.setPlainText(Path(default).name)
-    measurement.setTextWidth(dialog.width() - margins.left() - margins.right() - frame)
-    height = int(measurement.size().height() + 1) + frame
-    preview.setFixedHeight(min(height, screen.height() // 2))
+    width = dialog.width() - margins.left() - margins.right() - frame
+    max_height = screen.height() // 2
 
     def update_preview(position):
         try:
@@ -1000,6 +998,13 @@ def choose_output_path(parent, directory, stem, suffix=""):
         except (OSError, ValueError) as error:
             preview.setPlainText(str(error))
             use_name.setEnabled(False)
+        measurement.setPlainText(preview.toPlainText())
+        measurement.setTextWidth(width)
+        height = min(int(measurement.size().height() + 1) + frame, max_height)
+        if not dialog.isVisible() or height > preview.height():
+            preview.setFixedHeight(height)
+            # Anchor the top edge so the slider stays under the pointer.
+            dialog.resize(dialog.width(), layout.sizeHint().height())
 
     slider.valueChanged.connect(update_preview)
     update_preview(slider.value())
